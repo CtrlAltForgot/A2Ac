@@ -32,9 +32,21 @@ export class Store {
         name TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL, current_task TEXT,
         last_seen TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE TABLE IF NOT EXISTS profiles (
+        name TEXT PRIMARY KEY, display_name TEXT NOT NULL, avatar TEXT,
+        active_channel TEXT NOT NULL DEFAULT 'general', accept_delegations INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS delegation_requests (
+        id INTEGER PRIMARY KEY, requester TEXT NOT NULL, target_agent TEXT NOT NULL,
+        channel TEXT NOT NULL, request TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
       CREATE INDEX IF NOT EXISTS events_channel_id ON events(channel, id DESC);
       CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, updated_at DESC);
     `);
+    const profileColumns = this.db.pragma("table_info(profiles)") as { name: string }[];
+    if (!profileColumns.some((column) => column.name === "accept_delegations")) this.db.exec("ALTER TABLE profiles ADD COLUMN accept_delegations INTEGER NOT NULL DEFAULT 0");
   }
 
   private parse(row: Record<string, unknown>): Record<string, unknown> {
@@ -48,7 +60,7 @@ export class Store {
     const result = this.db.prepare(`INSERT INTO events
       (channel, kind, actor, actor_role, summary, detail, task_id, parent_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(input.channel ?? "general", input.kind, identity.name, identity.role, input.summary,
+      .run(input.channel ?? this.activeChannel(identity.name), input.kind, identity.name, identity.role, input.summary,
         input.detail === undefined ? null : JSON.stringify(input.detail), input.taskId ?? null, input.parentId ?? null);
     const value = this.getEvent(Number(result.lastInsertRowid));
     this.touch(identity, "online");
@@ -124,6 +136,7 @@ export class Store {
   }
 
   touch(identity: Identity, status = "online", currentTask?: string) {
+    this.ensureProfile(identity.name);
     this.db.prepare(`INSERT INTO presence(name, role, status, current_task, last_seen) VALUES (?, ?, ?, ?, datetime('now'))
       ON CONFLICT(name) DO UPDATE SET role=excluded.role,status=excluded.status,current_task=excluded.current_task,last_seen=datetime('now')`)
       .run(identity.name, identity.role, status, currentTask ?? null);
@@ -132,5 +145,52 @@ export class Store {
     return value;
   }
 
-  presence() { return this.db.prepare("SELECT * FROM presence ORDER BY last_seen DESC").all(); }
+  presence() { return this.db.prepare(`SELECT p.*, COALESCE(f.display_name,p.name) display_name, f.avatar, f.active_channel
+    FROM presence p LEFT JOIN profiles f ON f.name=p.name ORDER BY p.last_seen DESC`).all(); }
+
+  ensureProfile(name: string) {
+    this.db.prepare("INSERT OR IGNORE INTO profiles(name,display_name) VALUES (?,?)").run(name, name);
+    return this.profile(name);
+  }
+
+  profile(name: string) { return this.db.prepare("SELECT * FROM profiles WHERE name=?").get(name); }
+
+  profiles() { return this.db.prepare("SELECT * FROM profiles ORDER BY display_name").all(); }
+
+  updateProfile(name: string, patch: { displayName?: string; avatar?: string | null; acceptDelegations?: boolean }) {
+    this.ensureProfile(name);
+    const current = this.profile(name) as { display_name: string; avatar: string | null };
+    this.db.prepare("UPDATE profiles SET display_name=?, avatar=?, updated_at=datetime('now') WHERE name=?")
+      .run(patch.displayName ?? current.display_name, patch.avatar === undefined ? current.avatar : patch.avatar, name);
+    if (patch.acceptDelegations !== undefined) this.db.prepare("UPDATE profiles SET accept_delegations=? WHERE name=?").run(patch.acceptDelegations ? 1 : 0, name);
+    const value = this.profile(name);
+    this.onChange("profile", value);
+    return value;
+  }
+
+  activeChannel(name: string) {
+    this.ensureProfile(name);
+    return (this.profile(name) as { active_channel: string }).active_channel;
+  }
+
+  setActiveChannel(identity: Identity, channel: string) {
+    this.ensureProfile(identity.name);
+    this.db.prepare("UPDATE profiles SET active_channel=?,updated_at=datetime('now') WHERE name=?").run(channel, identity.name);
+    this.touch(identity, "online");
+    const value = this.profile(identity.name);
+    this.onChange("profile", value);
+    return value;
+  }
+
+  requestDelegation(identity: Identity, targetAgent: string, request: string) {
+    const target = this.ensureProfile(targetAgent) as { accept_delegations: number; active_channel: string };
+    if (!target.accept_delegations) throw new Error(`${targetAgent} is not accepting delegation requests`);
+    const result = this.db.prepare("INSERT INTO delegation_requests(requester,target_agent,channel,request) VALUES (?,?,?,?)")
+      .run(identity.name, targetAgent, target.active_channel, request);
+    const value = this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(result.lastInsertRowid);
+    this.event(identity, { channel: target.active_channel, kind: "delegation.requested", summary: `Requested help from ${targetAgent}`, detail: value });
+    return value;
+  }
+
+  delegationsFor(name: string) { return this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id").all(name); }
 }

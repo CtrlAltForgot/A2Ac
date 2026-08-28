@@ -30,3 +30,26 @@ test("task versions reject stale agent updates", () => {
   store.updateTask(bob, task.id, { assignee: "bob-agent", status: "in_progress", expectedVersion: task.version });
   assert.throws(() => store.updateTask(alice, task.id, { status: "done", expectedVersion: task.version }), /Version conflict/);
 });
+
+test("profiles keep stable IDs while display names, avatars, and channels change", () => {
+  const store = setup();
+  store.touch(alice);
+  store.updateProfile(alice.name, { displayName: "Builder Bot", avatar: "data:image/png;base64,AA==" });
+  store.setActiveChannel(alice, "dig-frenzy");
+  const event = store.event(alice, { kind: "progress", summary: "Working" });
+  const profile = store.profile(alice.name) as { display_name: string; active_channel: string };
+  assert.equal(profile.display_name, "Builder Bot");
+  assert.equal(profile.active_channel, "dig-frenzy");
+  assert.equal(event.actor, "alice-agent");
+  assert.equal(event.channel, "dig-frenzy");
+});
+
+test("delegations require explicit target opt-in and never execute work", () => {
+  const store = setup();
+  store.touch(alice);
+  assert.throws(() => store.requestDelegation(bob, alice.name, "Please review this"), /not accepting/);
+  store.updateProfile(alice.name, { acceptDelegations: true });
+  const request = store.requestDelegation(bob, alice.name, "Please review this") as { status: string };
+  assert.equal(request.status, "pending");
+  assert.equal(store.delegationsFor(alice.name).length, 1);
+});

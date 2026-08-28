@@ -10,6 +10,11 @@ const port = Number(process.env.PORT ?? 3210);
 const dataDir = resolve(process.env.DATA_DIR ?? "./data");
 const publicDir = resolve(process.env.PUBLIC_DIR ?? "./public");
 const credentials = loadCredentials();
+const agentOwners = new Map<string, string>();
+for (const entry of (process.env.A2AC_AGENT_OWNERS ?? "owner-agent:owner,buddy-agent:buddy").split(",")) {
+  const [agent, owner] = entry.trim().split(":");
+  if (agent && owner) agentOwners.set(agent, owner);
+}
 const store = new Store(dataDir);
 const app = express();
 const httpServer = createServer(app);
@@ -22,11 +27,27 @@ app.use(express.static(publicDir));
 
 const requireAuth = authMiddleware(credentials);
 app.use("/api", requireAuth);
-app.get("/api/me", (req, res) => { store.touch(req.identity!); res.json(req.identity); });
+const editableProfiles = (identity: NonNullable<express.Request["identity"]>) => credentials
+  .filter((candidate) => candidate.name === identity.name || identity.role === "admin" || agentOwners.get(candidate.name) === identity.name)
+  .map((candidate) => candidate.name);
+app.get("/api/me", (req, res) => {
+  store.touch(req.identity!);
+  res.json({ ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) });
+});
 app.get("/api/snapshot", (req, res) => res.json({
-  me: req.identity, channels: store.channels(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(),
+  me: { ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) },
+  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(),
   events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
 }));
+app.patch("/api/profiles/:name", (req, res) => {
+  const target = String(req.params.name);
+  if (!editableProfiles(req.identity!).includes(target)) return res.status(403).json({ error: "You can only edit yourself and your assigned agent" });
+  const displayName = req.body?.displayName;
+  const avatar = req.body?.avatar;
+  if (displayName !== undefined && (typeof displayName !== "string" || !displayName.trim() || displayName.trim().length > 40)) return res.status(400).json({ error: "Display name must be 1-40 characters" });
+  if (avatar !== undefined && avatar !== null && (typeof avatar !== "string" || avatar.length > 350_000 || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatar))) return res.status(400).json({ error: "Avatar must be a PNG, JPEG, WebP, or GIF under 250 KB" });
+  res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations }));
+});
 app.get("/api/events", (req, res) => res.json(store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))));
 app.post("/api/events", (req, res) => {
   const { channel = "general", kind = "message", summary, detail, taskId, parentId } = req.body ?? {};

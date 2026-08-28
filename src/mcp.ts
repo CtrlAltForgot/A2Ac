@@ -16,30 +16,45 @@ export function createMcpServer(store: Store, identity: Identity) {
   server.registerTool("a2ac_workspace_snapshot", {
     title: "Get collaboration snapshot",
     description: "Call at the start of work and periodically. Returns tasks, active resource claims, people/agents, and recent team messages.",
-    inputSchema: { channel: z.string().default("general"), eventLimit: z.number().int().min(1).max(100).default(30) }
-  }, async ({ channel, eventLimit }) => response({ identity, tasks: store.tasks(), claims: store.claims(), presence: store.presence(), events: store.events(channel, 0, eventLimit) }));
+    inputSchema: { channel: z.string().optional().describe("Omit to use your persisted active channel"), eventLimit: z.number().int().min(1).max(100).default(30) }
+  }, async ({ channel, eventLimit }) => {
+    const activeChannel = channel ?? store.activeChannel(identity.name);
+    return response({ identity, activeChannel, tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit) });
+  });
+
+  server.registerTool("a2ac_set_channel", {
+    title: "Set active project channel",
+    description: "Set the persistent channel for this agent before project work. Subsequent messages, actions, tasks, and claims default here.",
+    inputSchema: { channel: z.string().regex(/^[a-z0-9][a-z0-9-_]{0,62}$/) }
+  }, async ({ channel }) => response(store.setActiveChannel(identity, channel)));
+
+  server.registerTool("a2ac_request_delegation", {
+    title: "Request work from another agent",
+    description: "Queue a request only when the target agent explicitly accepts delegations. This never wakes or invokes a model; their next active turn must accept it.",
+    inputSchema: { targetAgent: z.string().min(1), request: z.string().min(1).max(2000) }
+  }, async ({ targetAgent, request }) => response(store.requestDelegation(identity, targetAgent, request)));
 
   server.registerTool("a2ac_send_message", {
     title: "Send team message",
     description: "Send a human-readable message to humans and agents. Include structured detail for expandable action context.",
     inputSchema: {
-      channel: z.string().default("general"), message: z.string().min(1),
+      channel: z.string().optional(), message: z.string().min(1),
       kind: z.enum(["message", "progress", "question", "decision", "warning", "handoff"]).default("message"),
       detail: z.record(z.unknown()).optional(), taskId: z.number().int().optional(), parentId: z.number().int().optional()
     }
-  }, async ({ channel, message, kind, detail, taskId, parentId }) => response(store.event(identity, { channel, kind, summary: message, detail, taskId, parentId })));
+  }, async ({ channel, message, kind, detail, taskId, parentId }) => response(store.event(identity, { channel: channel ?? store.activeChannel(identity.name), kind, summary: message, detail, taskId, parentId })));
 
   server.registerTool("a2ac_read_messages", {
     title: "Read team messages",
     description: "Read messages and structured activity after a known event id. Poll this while collaborating to see replies and avoid duplicated work.",
-    inputSchema: { channel: z.string().default("general"), afterId: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(250).default(100) }
-  }, async ({ channel, afterId, limit }) => response(store.events(channel, afterId, limit)));
+    inputSchema: { channel: z.string().optional(), afterId: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(250).default(100) }
+  }, async ({ channel, afterId, limit }) => response(store.events(channel ?? store.activeChannel(identity.name), afterId, limit)));
 
   server.registerTool("a2ac_report_action", {
     title: "Report agent action",
     description: "Publish a concise action summary with expandable structured context such as files, commands, tool calls, test output, or commit SHA.",
     inputSchema: {
-      summary: z.string().min(1), action: z.string().min(1), channel: z.string().default("general"),
+      summary: z.string().min(1), action: z.string().min(1), channel: z.string().optional(),
       files: z.array(z.string()).optional(), command: z.string().optional(), outcome: z.string().optional(), metadata: z.record(z.unknown()).optional(), taskId: z.number().int().optional()
     }
   }, async ({ summary, action, channel, files, command, outcome, metadata, taskId }) => response(store.event(identity, {
