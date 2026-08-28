@@ -52,6 +52,10 @@ export class Store {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pins (
+        channel TEXT NOT NULL, event_id INTEGER NOT NULL, pinned_by TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(channel,event_id)
+      );
       CREATE INDEX IF NOT EXISTS events_channel_id ON events(channel, id DESC);
       CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, updated_at DESC);
     `);
@@ -99,6 +103,18 @@ export class Store {
     return this.db.prepare(`SELECT channel, COUNT(*) count, MAX(id) last_event_id
       FROM events GROUP BY channel ORDER BY MAX(id) DESC`).all();
   }
+
+  pins(channel: string) { return (this.db.prepare(`SELECT p.channel,p.event_id,p.pinned_by,p.created_at,e.summary,e.actor,e.actor_role
+    FROM pins p JOIN events e ON e.id=p.event_id WHERE p.channel=? ORDER BY p.created_at`).all(channel) as Record<string,unknown>[]).map(row=>this.parse(row)); }
+
+  pin(identity: Identity, channel: string, eventId: number) {
+    const event=this.getEvent(eventId) as {channel:string}|undefined;
+    if(!event||event.channel!==channel)throw new Error("Message not found in this channel");
+    this.db.prepare("INSERT OR REPLACE INTO pins(channel,event_id,pinned_by) VALUES (?,?,?)").run(channel,eventId,identity.name);
+    const value=this.pins(channel).find(pin=>pin.event_id===eventId);this.onChange("pin",value);return value;
+  }
+
+  unpin(identity: Identity, channel:string,eventId:number){this.db.prepare("DELETE FROM pins WHERE channel=? AND event_id=?").run(channel,eventId);this.onChange("pin",{channel,eventId,removed:true,actor:identity.name});return{removed:true};}
 
   createTask(identity: Identity, input: { title: string; description?: string; priority?: string; assignee?: string }) {
     const result = this.db.prepare(`INSERT INTO tasks (title, description, priority, assignee, created_by)

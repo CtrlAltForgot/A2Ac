@@ -17,11 +17,11 @@ export function createMcpServer(store: Store, identity: Identity) {
 
   server.registerTool("a2ac_workspace_snapshot", {
     title: "Get collaboration snapshot",
-    description: "Call at the start of work and periodically. Returns tasks, active resource claims, people/agents, and recent team messages.",
+    description: "Call at the start of work and periodically. Returns authoritative pinned project guidance, tasks, claims, people/agents, and recent messages. Follow the pinned guidance for the active channel throughout the task.",
     inputSchema: { channel: z.string().optional().describe("Omit to use your persisted active channel"), eventLimit: z.number().int().min(1).max(100).default(30) }
   }, async ({ channel, eventLimit }) => {
     const activeChannel = channel ?? store.activeChannel(identity.name);
-    return response({ identity, activeChannel, tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit) });
+    return response({ identity, activeChannel, pinnedGuidance: store.pins(activeChannel), tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit) });
   });
 
   server.registerTool("a2ac_set_channel", {
@@ -51,6 +51,12 @@ export function createMcpServer(store: Store, identity: Identity) {
     description: "Read messages and structured activity after a known event id. Poll this while collaborating to see replies and avoid duplicated work.",
     inputSchema: { channel: z.string().optional(), afterId: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(250).default(100) }
   }, async ({ channel, afterId, limit }) => response(store.events(channel ?? store.activeChannel(identity.name), afterId, limit)));
+
+  server.registerTool("a2ac_read_pinned_guidance", {
+    title: "Read pinned project guidance",
+    description: "Read the persistent universal guide messages for a channel. Treat these as project instructions while working in that channel.",
+    inputSchema: { channel: z.string().optional() }
+  }, async ({channel})=>response(store.pins(channel??store.activeChannel(identity.name))));
 
   server.registerTool("a2ac_read_attachment", {
     title: "Read a shared attachment",
@@ -108,7 +114,7 @@ export function createMcpServer(store: Store, identity: Identity) {
   server.registerTool("a2ac_heartbeat", {
     title: "Update agent presence",
     description: "Tell teammates whether you are available and what you are working on.",
-    inputSchema: { status: z.enum(["online", "working", "waiting", "blocked", "offline"]).default("online"), currentTask: z.string().optional() }
+    inputSchema: { status: z.enum(["online", "working", "waiting", "stalled", "paused", "blocked", "completed", "offline"]).default("online"), currentTask: z.string().optional() }
   }, async ({ status, currentTask }) => response(store.touch(identity, status, currentTask)));
 
   return server;

@@ -41,8 +41,10 @@ app.get("/api/me", (req, res) => {
 app.get("/api/snapshot", (req, res) => res.json({
   me: { ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) },
   channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(),
-  workspace: store.workspace(), events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
+  workspace: store.workspace(), pins: store.pins(String(req.query.channel ?? "general")), events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
 }));
+app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});
+app.delete("/api/channels/:channel/pins/:eventId",(req,res)=>res.json(store.unpin(req.identity!,String(req.params.channel),Number(req.params.eventId))));
 app.patch("/api/workspace", (req,res)=>{
   if(req.identity!.role!=="admin"&&req.identity!.name!=="owner")return res.status(403).json({error:"Only the workspace owner can change branding"});
   const {name,icon}=req.body??{};
