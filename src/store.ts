@@ -192,13 +192,14 @@ export class Store {
     return value;
   }
 
-  requestDelegation(identity: Identity, targetAgent: string, request: string) {
+  requestDelegation(identity: Identity, targetAgent: string, request: string, channel?: string) {
     const target = this.ensureProfile(targetAgent) as { accept_delegations: number; active_channel: string };
     if (!target.accept_delegations) throw new Error(`${targetAgent} is not accepting delegation requests`);
+    const requestChannel = channel ?? this.activeChannel(identity.name);
     const result = this.db.prepare("INSERT INTO delegation_requests(requester,target_agent,channel,request) VALUES (?,?,?,?)")
-      .run(identity.name, targetAgent, target.active_channel, request);
+      .run(identity.name, targetAgent, requestChannel, request);
     const value = this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(result.lastInsertRowid);
-    this.event(identity, { channel: target.active_channel, kind: "delegation.requested", summary: `Requested help from ${targetAgent}`, detail: value });
+    this.event(identity, { channel: requestChannel, kind: "delegation.requested", summary: `Requested help from ${targetAgent}`, detail: value });
     return value;
   }
 

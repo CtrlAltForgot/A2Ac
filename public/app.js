@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", snapshot: null, ws: null, seen: {}, seenKey: "", replyTo: null };
+const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", snapshot: null, ws: null, seen: {}, seenKey: "", replyTo: null, mention: null };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "content-type": "application/json", authorization: `Bearer ${state.token}`, ...options.headers } });
@@ -13,6 +13,17 @@ const relative = (date) => new Intl.DateTimeFormat(undefined, { hour: "numeric",
 const elapsed = date => { if (!date) return "not started"; const minutes = Math.max(0, Math.floor((Date.now() - new Date(`${date}Z`)) / 60000)); if (minutes < 1) return "just started"; if (minutes < 60) return `${minutes}m`; const hours = Math.floor(minutes / 60), rest = minutes % 60; if (hours < 24) return `${hours}h ${rest}m`; return `${Math.floor(hours / 24)}d ${hours % 24}h`; };
 const profileFor = name => state.snapshot?.profiles?.find(profile => profile.name === name) || { name, display_name: name, avatar: null };
 const avatarContent = profile => profile.avatar ? `<img src="${profile.avatar}" alt="">` : initials(profile.display_name || profile.name);
+function formatMessage(value) {
+  const profiles = [...(state.snapshot?.profiles || [])].sort((a, b) => b.display_name.length - a.display_name.length);
+  const matches = [];
+  for (const profile of profiles) {
+    const needle = `@${profile.display_name}`.toLowerCase(); let from = 0;
+    while (from < value.length) { const index = value.toLowerCase().indexOf(needle, from); if (index < 0) break; const end = index + needle.length, before = value[index - 1], after = value[end]; if ((!before || /\s|[(]/.test(before)) && (!after || /\s|[.,!?;:)]/.test(after))) matches.push({ index, end, profile }); from = end; }
+  }
+  matches.sort((a,b) => a.index-b.index || b.end-a.end); let cursor=0, html="";
+  for (const match of matches) { if (match.index < cursor) continue; html += escapeHtml(value.slice(cursor,match.index)); html += `<button class="message-mention" data-mentioned="${escapeHtml(match.profile.name)}">@${escapeHtml(match.profile.display_name)}</button>`; cursor=match.end; }
+  return html + escapeHtml(value.slice(cursor));
+}
 
 async function login(token) {
   state.token = token;
@@ -46,7 +57,7 @@ function render() {
   $("#channels").innerHTML = [...channels].map(name => { const info = s.channels.find(channel => channel.channel === name); const unread = name !== state.channel && Number(info?.last_event_id || 0) > Number(state.seen[name] || 0); return `<button class="channel ${name === state.channel ? "active" : ""}" data-channel="${escapeHtml(name)}"><span>#</span>${escapeHtml(name)}${unread ? `<i class="unread-blip" title="New activity"></i>` : ""}</button>`; }).join("");
   document.querySelectorAll("[data-channel]").forEach(el => el.onclick = async () => { state.channel = el.dataset.channel; await refresh(); });
   $("#online-count").textContent = s.presence.length;
-  $("#presence").innerHTML = s.presence.map(p => { const editable = s.me.editableProfiles.includes(p.name); return `<button class="person ${editable ? "editable" : ""}" ${editable ? `data-profile="${escapeHtml(p.name)}"` : "disabled"}><div class="person-avatar">${avatarContent(p)}<i></i></div><div><b>${escapeHtml(p.display_name || p.name)}</b><small>${escapeHtml(p.current_task || p.status)} · #${escapeHtml(p.active_channel || "general")}</small></div></button>`; }).join("");
+  $("#presence").innerHTML = s.presence.map(p => { const editable = s.me.editableProfiles.includes(p.name); return `<button class="person ${editable ? "editable" : ""}" data-profile-name="${escapeHtml(p.name)}" ${editable ? `data-profile="${escapeHtml(p.name)}"` : "disabled"}><div class="person-avatar">${avatarContent(p)}<i></i></div><div><b>${escapeHtml(p.display_name || p.name)}</b><small>${escapeHtml(p.current_task || p.status)} · #${escapeHtml(p.active_channel || "general")}</small></div></button>`; }).join("");
   document.querySelectorAll("[data-profile]").forEach(el => el.onclick = () => openProfile(el.dataset.profile));
   renderEvents(s.events); renderTasks(s.tasks); renderClaims(s.claims);
 }
@@ -55,9 +66,10 @@ function renderEvents(events) {
   const timeline = $("#timeline");
   if (!events.length) { timeline.innerHTML = `<div class="empty"><div><strong>#${escapeHtml(state.channel)} is ready</strong>Start a conversation with your humans and agents.</div></div>`; return; }
   const byId = new Map(events.map(event => [event.id, event]));
-  timeline.innerHTML = events.map(e => { const profile = profileFor(e.actor), parent = e.parent_id ? byId.get(e.parent_id) : null, parentProfile = parent ? profileFor(parent.actor) : null; return `<article class="event ${e.actor_role}"><div class="event-avatar">${avatarContent(profile)}</div><div>${parent ? `<button class="reply-quote" data-jump="${parent.id}"><b>${escapeHtml(parentProfile.display_name || parent.actor)}</b><span>${escapeHtml(parent.summary)}</span></button>` : ""}<div class="event-head"><b>${escapeHtml(profile.display_name || e.actor)}</b><span class="role">${escapeHtml(e.actor_role)}</span><time>${relative(e.created_at)}</time><button class="reply-action" data-reply="${e.id}" title="Reply">↩ Reply</button></div><p class="event-summary">${escapeHtml(e.summary)}</p><div class="kind">${escapeHtml(e.kind)}${e.task_id ? ` · TASK #${e.task_id}` : ""}</div>${e.detail ? `<details class="context-card"><summary>Show action context</summary><pre>${escapeHtml(JSON.stringify(e.detail, null, 2))}</pre></details>` : ""}</div></article>`; }).join("");
+  timeline.innerHTML = events.map(e => { const profile = profileFor(e.actor), parent = e.parent_id ? byId.get(e.parent_id) : null, parentProfile = parent ? profileFor(parent.actor) : null; return `<article class="event ${e.actor_role}"><div class="event-avatar">${avatarContent(profile)}</div><div>${parent ? `<button class="reply-quote" data-jump="${parent.id}"><b>${escapeHtml(parentProfile.display_name || parent.actor)}</b><span>${escapeHtml(parent.summary)}</span></button>` : ""}<div class="event-head"><b>${escapeHtml(profile.display_name || e.actor)}</b><span class="role">${escapeHtml(e.actor_role)}</span><time>${relative(e.created_at)}</time><button class="reply-action" data-reply="${e.id}" title="Reply">↩ Reply</button></div><p class="event-summary">${formatMessage(e.summary)}</p><div class="kind">${escapeHtml(e.kind)}${e.task_id ? ` · TASK #${e.task_id}` : ""}</div>${e.detail ? `<details class="context-card"><summary>Show action context</summary><pre>${escapeHtml(JSON.stringify(e.detail, null, 2))}</pre></details>` : ""}</div></article>`; }).join("");
   document.querySelectorAll("[data-reply]").forEach(button => button.onclick = () => setReply(events.find(event => event.id === Number(button.dataset.reply))));
   document.querySelectorAll("[data-jump]").forEach(button => button.onclick = () => { const target = document.querySelector(`[data-reply="${button.dataset.jump}"]`)?.closest(".event"); target?.scrollIntoView({ behavior: "smooth", block: "center" }); target?.classList.add("reply-flash"); setTimeout(() => target?.classList.remove("reply-flash"), 1400); });
+  document.querySelectorAll("[data-mentioned]").forEach(button => button.onclick = () => { const target = button.dataset.mentioned; if (state.snapshot.me.editableProfiles.includes(target)) openProfile(target); else { const member = state.snapshot.presence.find(person => person.name === target); const line = document.querySelector(`[data-profile-name="${CSS.escape(target)}"]`); line?.scrollIntoView({ behavior: "smooth", block: "nearest" }); button.title = `${profileFor(target).display_name} · ${member?.status || "offline"} · #${member?.active_channel || "general"}`; } });
   requestAnimationFrame(() => timeline.scrollTop = timeline.scrollHeight);
 }
 
@@ -83,7 +95,21 @@ function connect() {
 
 $("#login-form").onsubmit = async (event) => { event.preventDefault(); $("#login-error").textContent = ""; try { await login($("#token").value); } catch (error) { $("#login-error").textContent = error.message; } };
 $("#composer").onsubmit = async (event) => { event.preventDefault(); const field = $("#message"), summary = field.value.trim(), parentId = state.replyTo?.id; if (!summary) return; field.value = ""; setReply(null); await api("/api/events", { method: "POST", body: JSON.stringify({ channel: state.channel, summary, kind: "message", parentId }) }); };
-$("#message").onkeydown = event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#composer").requestSubmit(); } };
+function updateMentionMenu() {
+  const field = $("#message"), before = field.value.slice(0, field.selectionStart), match = before.match(/(?:^|\s)@([^@\n]*)$/);
+  if (!match) return closeMentionMenu();
+  const query = match[1].trim().toLowerCase(), start = field.selectionStart - match[1].length - 1;
+  const profiles = (state.snapshot?.profiles || []).filter(profile => !query || profile.display_name.toLowerCase().includes(query)).slice(0,8);
+  if (!profiles.length) return closeMentionMenu();
+  state.mention = { start, end: field.selectionStart, profiles, index: Math.min(state.mention?.index || 0, profiles.length-1) };
+  $("#mention-query").textContent = `@${match[1]}`; $("#mention-menu").classList.remove("hidden");
+  $("#mention-results").innerHTML = profiles.map((profile,index) => { const presence=state.snapshot.presence.find(person=>person.name===profile.name); return `<button type="button" class="mention-option ${index===state.mention.index?"active":""}" data-mention-index="${index}"><span class="person-avatar">${avatarContent(profile)}</span><span><b>${escapeHtml(profile.display_name)}</b><small>${escapeHtml(presence?.role || (profile.name.endsWith("-agent")?"agent":"member"))} · #${escapeHtml(presence?.active_channel || profile.active_channel || "general")}</small></span></button>`; }).join("");
+  document.querySelectorAll("[data-mention-index]").forEach(button => { button.onmousedown = event => { event.preventDefault(); chooseMention(Number(button.dataset.mentionIndex)); }; });
+}
+function closeMentionMenu(){ state.mention=null; $("#mention-menu").classList.add("hidden"); }
+function chooseMention(index=state.mention?.index||0){ if(!state.mention)return; const field=$("#message"), profile=state.mention.profiles[index]; field.setRangeText(`@${profile.display_name} `,state.mention.start,state.mention.end,"end"); closeMentionMenu(); field.focus(); }
+$("#message").oninput = updateMentionMenu;
+$("#message").onkeydown = event => { if(state.mention){ if(event.key==="ArrowDown"||event.key==="ArrowUp"){event.preventDefault(); state.mention.index=(state.mention.index+(event.key==="ArrowDown"?1:-1)+state.mention.profiles.length)%state.mention.profiles.length; updateMentionMenu(); return;} if(event.key==="Tab"||event.key==="Enter"){event.preventDefault();chooseMention();return;} if(event.key==="Escape"){event.preventDefault();closeMentionMenu();return;} } if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#composer").requestSubmit(); } };
 $("#cancel-reply").onclick = () => setReply(null);
 $("#refresh").onclick = refresh;
 $("#logout").onclick = () => { localStorage.removeItem("a2ac-token"); location.reload(); };

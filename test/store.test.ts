@@ -50,8 +50,9 @@ test("delegations require explicit target opt-in and never execute work", () => 
   store.touch(alice);
   assert.throws(() => store.requestDelegation(bob, alice.name, "Please review this"), /not accepting/);
   store.updateProfile(alice.name, { acceptDelegations: true });
-  const request = store.requestDelegation(bob, alice.name, "Please review this") as { status: string };
+  const request = store.requestDelegation(bob, alice.name, "Please review this", "bot-commands") as { status: string; channel: string };
   assert.equal(request.status, "pending");
+  assert.equal(request.channel, "bot-commands");
   assert.equal(store.delegationsFor(alice.name).length, 1);
   const claimed = store.claimNextDelegation(alice.name) as { id: number; status: string };
   assert.equal(claimed.status, "running");

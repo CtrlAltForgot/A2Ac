@@ -38,7 +38,7 @@ async function runCodex(request) {
   const project = config.projects[request.channel];
   const output = join(tmpdir(), `a2ac-runner-${request.id}-${Date.now()}.txt`);
   const prompt = `You are executing an explicitly queued A2Ac delegation while the owner is away.\n\nDelegation #${request.id}\nRequester: ${request.requester}\nProject channel: ${request.channel}\nRequest: ${request.request}\n\nFirst call a2ac_set_channel for ${request.channel}, then a2ac_workspace_snapshot. Respect all tasks and resource claims. Announce this delegated run, claim only the narrowest resources needed, do the requested work in the current repository, run proportionate tests, report actions through A2Ac, and release claims when complete. Do not perform unrelated work or request another autonomous run.`;
-  const args = ["exec", "--approve-for-me", "--sandbox", "workspace-write", "--cd", project, "--output-last-message", output, "-"];
+  const args = ["exec", "--approve-for-me", "--ephemeral", "--cd", project, "--output-last-message", output, "-"];
   const child = spawn(config.codexPath, args, { stdio: ["pipe", "inherit", "inherit"], env: { ...process.env, A2AC_TOKEN: config.agentKey } });
   child.stdin.end(prompt);
   const timeout = setTimeout(() => child.kill("SIGTERM"), Math.max(5, Math.min(config.maxMinutes || 45, 90)) * 60_000);

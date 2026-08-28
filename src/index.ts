@@ -56,7 +56,7 @@ app.post("/api/events", (req, res) => {
   const normalized = summary.toLowerCase();
   for (const profile of store.profiles() as { name: string; display_name: string; accept_delegations: number }[]) {
     if (profile.accept_delegations && normalized.includes(`@${profile.display_name.toLowerCase()}`)) {
-      try { store.requestDelegation(req.identity!, profile.name, summary.trim()); } catch { /* message still succeeds */ }
+      try { store.requestDelegation(req.identity!, profile.name, summary.trim(), channel); } catch { /* message still succeeds */ }
     }
   }
   res.status(201).json(event);
