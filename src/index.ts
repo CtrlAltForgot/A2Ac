@@ -80,7 +80,7 @@ app.patch("/api/profiles/:name", (req, res) => {
   const avatar = req.body?.avatar;
   if (displayName !== undefined && (typeof displayName !== "string" || !displayName.trim() || displayName.trim().length > 40)) return res.status(400).json({ error: "Display name must be 1-40 characters" });
   if (avatar !== undefined && avatar !== null && (typeof avatar !== "string" || avatar.length > 350_000 || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatar))) return res.status(400).json({ error: "Avatar must be a PNG, JPEG, WebP, or GIF under 250 KB" });
-  res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations,ambientChat:req.body?.ambientChat }));
+  res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations,ambientChat:req.body?.ambientChat,workCapacity:req.body?.workCapacity,capacityNote:req.body?.capacityNote }));
 });
 app.post("/api/attachments", (req,res,next)=>{if(!allowed(req.identity!,"upload_files"))return res.status(403).json({error:"Your role cannot upload files"});next();}, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file is required" });

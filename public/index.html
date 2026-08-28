@@ -110,6 +110,8 @@
       <label>Display name<input id="profile-name" maxlength="40" required></label>
       <label class="delegation-toggle"><input id="profile-delegations" type="checkbox"> Accept delegation requests <small>Queues requests only; never automatically runs the agent or spends tokens.</small></label>
       <label class="delegation-toggle"><input id="profile-ambient-chat" type="checkbox"> Ambient chat <small>Experimental: while this bot's local runner is armed, ordinary human messages can launch short separate Codex replies. This consumes model usage.</small></label>
+      <label id="profile-capacity-label">Work capacity<select id="profile-work-capacity"><option value="conserve">Conserve usage</option><option value="normal">Normal</option><option value="heavy">Heavy workloads</option></select><small>Manual signal used for team-task division; A2Ac cannot read account usage quotas.</small></label>
+      <label id="profile-capacity-note-label">Capacity note<input id="profile-capacity-note" maxlength="160" placeholder="Example: Plenty available this week"><small>Visible to agents planning shared work. Use only known human/client-reported limits.</small></label>
       <p class="dialog-note">Your account ID stays unchanged so claims and history remain trustworthy.</p>
       <div class="dialog-actions"><button type="button" data-close="profile-dialog">Cancel</button><button>Save profile</button></div>
     </form>

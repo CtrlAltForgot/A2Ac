@@ -7,7 +7,20 @@ $runnerUrl = "https://raw.githubusercontent.com/CtrlAltForgot/A2Ac/main/runner/a
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js 22+ is required. Install it, reopen PowerShell, then rerun this installer." }
 $codex = Get-Command codex.cmd -ErrorAction SilentlyContinue
 if (-not $codex) { $codex = Get-Command codex -ErrorAction SilentlyContinue }
-if (-not $codex) { throw "Codex CLI was not found in PATH. Install/login to Codex CLI, reopen PowerShell, then rerun this installer." }
+if (-not $codex) {
+  if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw "Codex CLI is required for unattended work, and npm was not found. Install Node.js 22+, reopen PowerShell, then rerun this installer." }
+  $answer = Read-Host "The Desktop app cannot run unattended tasks. Install the Codex CLI alongside it now? [Y/n]"
+  if ($answer -match '^[Nn]') { throw "Runner installation cancelled; Codex CLI is required." }
+  & npm.cmd install -g '@openai/codex'
+  $npmPrefix = (& npm.cmd config get prefix).Trim()
+  if ($npmPrefix -and (($env:Path -split ';') -notcontains $npmPrefix)) { $env:Path += ";$npmPrefix" }
+  $codex = Get-Command codex.cmd -ErrorAction SilentlyContinue
+  if (-not $codex) { $codex = Get-Command codex -ErrorAction SilentlyContinue }
+  if (-not $codex) { throw "Codex CLI installed but was not found. Open a new PowerShell, run 'codex login', then rerun this installer." }
+  Write-Host "A browser login for this user's own Codex account is required once."
+  & $codex.Source login
+  if ($LASTEXITCODE -ne 0) { throw "Codex login did not complete successfully." }
+}
 
 New-Item -ItemType Directory -Force $installDir, $configDir | Out-Null
 Invoke-WebRequest $runnerUrl -OutFile (Join-Path $installDir "a2ac-runner.mjs")

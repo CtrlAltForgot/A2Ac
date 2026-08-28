@@ -39,7 +39,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS profiles (
         name TEXT PRIMARY KEY, display_name TEXT NOT NULL, avatar TEXT,
         active_channel TEXT NOT NULL DEFAULT 'general', accept_delegations INTEGER NOT NULL DEFAULT 0,
-        ambient_chat INTEGER NOT NULL DEFAULT 0,
+        ambient_chat INTEGER NOT NULL DEFAULT 0, work_capacity TEXT NOT NULL DEFAULT 'normal', capacity_note TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS delegation_requests (
@@ -76,6 +76,8 @@ export class Store {
     const profileColumns = this.db.pragma("table_info(profiles)") as { name: string }[];
     if (!profileColumns.some((column) => column.name === "accept_delegations")) this.db.exec("ALTER TABLE profiles ADD COLUMN accept_delegations INTEGER NOT NULL DEFAULT 0");
     if (!profileColumns.some((column) => column.name === "ambient_chat")) this.db.exec("ALTER TABLE profiles ADD COLUMN ambient_chat INTEGER NOT NULL DEFAULT 0");
+    if (!profileColumns.some((column) => column.name === "work_capacity")) this.db.exec("ALTER TABLE profiles ADD COLUMN work_capacity TEXT NOT NULL DEFAULT 'normal'");
+    if (!profileColumns.some((column) => column.name === "capacity_note")) this.db.exec("ALTER TABLE profiles ADD COLUMN capacity_note TEXT NOT NULL DEFAULT ''");
     const taskColumns = this.db.pragma("table_info(tasks)") as { name: string }[];
     if (!taskColumns.some((column) => column.name === "started_at")) {
       this.db.exec("ALTER TABLE tasks ADD COLUMN started_at TEXT");
@@ -270,13 +272,15 @@ export class Store {
   saveRole(input:{id:string;name:string;permissions:string[]}) { this.db.prepare("INSERT INTO workspace_roles(id,name,permissions) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,permissions=excluded.permissions").run(input.id,input.name,JSON.stringify(input.permissions));const value=this.roles();this.onChange("roles",value);return value; }
   assignRole(userName:string,roleId:string){this.db.prepare("INSERT INTO user_roles(user_name,role_id) VALUES (?,?) ON CONFLICT(user_name) DO UPDATE SET role_id=excluded.role_id").run(userName,roleId);const value=this.roleAssignments();this.onChange("roles",value);return value;}
 
-  updateProfile(name: string, patch: { displayName?: string; avatar?: string | null; acceptDelegations?: boolean; ambientChat?:boolean }) {
+  updateProfile(name: string, patch: { displayName?: string; avatar?: string | null; acceptDelegations?: boolean; ambientChat?:boolean;workCapacity?:string;capacityNote?:string }) {
     this.ensureProfile(name);
     const current = this.profile(name) as { display_name: string; avatar: string | null };
     this.db.prepare("UPDATE profiles SET display_name=?, avatar=?, updated_at=datetime('now') WHERE name=?")
       .run(patch.displayName ?? current.display_name, patch.avatar === undefined ? current.avatar : patch.avatar, name);
     if (patch.acceptDelegations !== undefined) this.db.prepare("UPDATE profiles SET accept_delegations=? WHERE name=?").run(patch.acceptDelegations ? 1 : 0, name);
     if (patch.ambientChat !== undefined) this.db.prepare("UPDATE profiles SET ambient_chat=? WHERE name=?").run(patch.ambientChat ? 1 : 0, name);
+    if (patch.workCapacity !== undefined) {if(!["conserve","normal","heavy"].includes(patch.workCapacity))throw new Error("Invalid work capacity");this.db.prepare("UPDATE profiles SET work_capacity=? WHERE name=?").run(patch.workCapacity,name);}
+    if(patch.capacityNote!==undefined)this.db.prepare("UPDATE profiles SET capacity_note=? WHERE name=?").run(patch.capacityNote.trim().slice(0,160),name);
     const value = this.profile(name);
     this.onChange("profile", value);
     return value;

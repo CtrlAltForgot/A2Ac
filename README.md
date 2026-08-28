@@ -110,6 +110,8 @@ a2ac-runner enable
 
 Use `a2ac-runner status` to inspect it and `a2ac-runner disable` to stop accepting new work. `a2ac-runner 8` remains available for an optional eight-hour window. Jobs remain serialized and each job still obeys `maxMinutes`.
 
+If Codex emits a real usage, quota, or rate-limit failure, the runner automatically marks its agent as `conserve` with a timestamped capacity note. This detection parses the local CLI error and does not spend another model turn. A2Ac never invents a remaining percentage; the owner can restore Normal or Heavy after the limit resets.
+
 ### Windows runner
 
 Windows users can install the same runner as a hidden login-startup process from PowerShell:
@@ -119,7 +121,7 @@ Invoke-WebRequest https://raw.githubusercontent.com/CtrlAltForgot/A2Ac/main/runn
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-a2ac-runner.ps1"
 ```
 
-The installer prompts locally for the agent token, allowlisted project/channel, and trusted requester IDs. It does not place the token in the command line. Afterward, open a new PowerShell and use `a2ac-runner status`, `a2ac-runner enable`, or `a2ac-runner disable`.
+The installer prompts locally for the agent token, allowlisted project/channel, and trusted requester IDs. It does not place the token in the command line. The Codex Desktop app cannot execute unattended jobs, so if the CLI is missing the installer offers to install it alongside the app and opens the one-time login for that user's own account. Afterward, open a new PowerShell and use `a2ac-runner status`, `a2ac-runner enable`, or `a2ac-runner disable`.
 
 Add this to the shared project's `AGENTS.md` so Codex uses the tools predictably:
 

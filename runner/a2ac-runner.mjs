@@ -44,13 +44,15 @@ async function runCodex(request, previousChannel) {
     ? `You are a short-lived ambient A2Ac chat instance, separate from the owner's main agent. Human ${request.requester} posted event #${request.source_event_id} in #${request.channel}: ${request.request}\n\nLoad a2ac_project_context for exactly #${request.channel} with messageLimit 20, find event #${request.source_event_id}, and consider its nearby conversation and attachments. If a natural useful response is appropriate and the message is reasonably directed to you or the group, send one concise human-style reply using a2ac_send_message with channel ${request.channel}, kind message, and parentId ${request.source_event_id}. You may answer a question or casually converse. If it asks whether anyone can do work, only volunteer or act when the request is clear, safe, within the allowlisted project, and does not conflict with tasks or claims; announce and claim narrowly first. If the message is clearly between humans, rhetorical, already resolved, or needs no useful response, exit silently. Never respond to agent-authored chatter, never trigger another delegation, never change the persistent channel, and never create/update/clear Activity or disturb the owner's existing goal.`
     : `You are executing an explicitly queued A2Ac delegation while the owner is away.\n\nDelegation #${request.id}\nRequester: ${request.requester}\nRequest source channel: ${request.channel}\nOwner's persistent agent channel: ${previousChannel}\nRequest: ${request.request}\n\nThis is a temporary side request, not permission to replace or forget the agent's existing goal. Do NOT call a2ac_set_channel: this delegation must never change the owner's persistent channel. First call a2ac_workspace_snapshot, remember any existing Activity/task for this agent, and inspect availableChannels. Semantically choose the existing channel that best matches the actual project/topic in the request; do not blindly use the source channel. Only when absolutely no channel fits, choose a short dedicated project/topic slug. Then call a2ac_project_context for that chosen work channel. Pass the chosen work channel explicitly to every A2Ac message, action, claim, and release tool that accepts it. If this agent already has an Activity, NEVER overwrite, complete, idle, or otherwise modify that Activity; use concise channel progress messages for this delegation instead. If it has no Activity, a temporary Activity is allowed and must be cleared when done. Respect all tasks and claims, announce the run, claim narrowly, do only the requested side work, test proportionately, report actions, release every delegation claim, and leave the original goal/task/Activity intact so its normal session can continue. Do not perform unrelated work or request another autonomous run.`;
   const args = ["exec", "--approve-for-me", "--ephemeral", "--cd", project, "--output-last-message", output, "-"];
-  const child = spawn(config.codexPath, args, { stdio: ["pipe", "inherit", "inherit"], env: { ...process.env, A2AC_TOKEN: config.agentKey } });
+  const child = spawn(config.codexPath, args, { stdio: ["pipe", "inherit", "pipe"], env: { ...process.env, A2AC_TOKEN: config.agentKey } });
+  let stderr="";child.stderr.on("data",chunk=>{const text=chunk.toString();stderr=(stderr+text).slice(-12000);process.stderr.write(text);});
   child.stdin.end(prompt);
   const timeout = setTimeout(() => child.kill("SIGTERM"), Math.max(5, Math.min(config.maxMinutes || 45, 90)) * 60_000);
   const code = await new Promise((resolve, reject) => { child.on("error", reject); child.on("exit", resolve); });
   clearTimeout(timeout);
-  const result = await readFile(output, "utf8").catch(() => `Codex exited with code ${code}`);
-  return { status: code === 0 ? "completed" : "failed", result: result.slice(0, 4000) };
+  const result = await readFile(output, "utf8").catch(() => `Codex exited with code ${code}${stderr?`\n${stderr}`:""}`);
+  const usageWarning=code!==0&&/\b(?:usage|rate|plan|quota)\s*(?:limit|cap)|too many requests|limit (?:reached|exceeded)|resets? (?:at|in)/i.test(stderr);
+  return { status: code === 0 ? "completed" : "failed", result: result.slice(0, 4000),usageWarning };
 }
 
 console.log("A2Ac runner service started; local arming is currently required before jobs can run.");
@@ -66,6 +68,7 @@ for (;;) {
         await save(statePath, { ...state, jobsRemaining: state.jobsRemaining > 0 ? state.jobsRemaining - 1 : -1 });
         let outcome;
         try { outcome = await runCodex(request,previousChannel); } catch (error) { outcome = { status: "failed", result: error instanceof Error ? error.message : String(error) }; }
+        if(outcome.usageWarning)await api(`/api/profiles/${encodeURIComponent(me.name)}`,{method:"PATCH",body:JSON.stringify({workCapacity:"conserve",capacityNote:`Codex runner reported a real usage/rate-limit warning at ${new Date().toLocaleString()}.`})}).catch(error=>console.error("Could not publish capacity warning:",error.message));
         try{await api(`/api/runner/delegations/${request.id}/finish`, { method: "POST", body: JSON.stringify(outcome) });}finally{await api("/api/runner/channel",{method:"POST",body:JSON.stringify({channel:previousChannel})});}
       }
     }
