@@ -9,6 +9,7 @@ import { handleMcp } from "./mcp.js";
 import { Store } from "./store.js";
 
 const port = Number(process.env.PORT ?? 3210);
+const agentPresenceMinutes = Math.max(1, Math.min(Number(process.env.A2AC_AGENT_PRESENCE_MINUTES ?? 60), 1440));
 const dataDir = resolve(process.env.DATA_DIR ?? "./data");
 const publicDir = resolve(process.env.PUBLIC_DIR ?? "./public");
 const credentials = loadCredentials();
@@ -30,7 +31,7 @@ const liveHumanNames = () => new Set([...sockets.clients]
 const visiblePresence = (viewer?: { name: string; role: string }) => {
   const humans = liveHumanNames();
   if (viewer && viewer.role !== "agent") humans.add(viewer.name);
-  const agentCutoff = Date.now() - 120_000;
+  const agentCutoff = Date.now() - agentPresenceMinutes * 60_000;
   return (store.presence() as { name: string; role: string; last_seen: string }[]).filter((person) =>
     person.role === "agent" ? new Date(`${person.last_seen}Z`).getTime() >= agentCutoff : humans.has(person.name));
 };
