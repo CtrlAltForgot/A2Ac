@@ -24,6 +24,27 @@ function formatMessage(value) {
   for (const match of matches) { if (match.index < cursor) continue; html += escapeHtml(value.slice(cursor,match.index)); html += `<button class="message-mention" data-mentioned="${escapeHtml(match.profile.name)}">@${escapeHtml(match.profile.display_name)}</button>`; cursor=match.end; }
   return html + escapeHtml(value.slice(cursor));
 }
+const humanLabel=value=>String(value).replace(/_/g," ").replace(/\b\w/g,letter=>letter.toUpperCase());
+function contextValue(value,key="") {
+  if(value===null||value===undefined)return "";
+  if(Array.isArray(value)){if(!value.length)return "";return `<div class="context-list">${value.map((item,index)=>typeof item==="object"?`<div class="context-step"><i></i><div>${contextObject(item,`Step ${index+1}`)}</div></div>`:`<span class="context-chip">${escapeHtml(item)}</span>`).join("")}</div>`;}
+  if(typeof value==="object")return contextObject(value);
+  if(key==="command")return `<code class="context-command">${escapeHtml(value)}</code>`;
+  return `<span>${escapeHtml(value)}</span>`;
+}
+function contextObject(object,title="") {
+  const ignored=new Set(["expectedVersion","version","id","created_at","updated_at","started_at","created_by"]);
+  const rows=Object.entries(object||{}).filter(([key,value])=>!ignored.has(key)&&value!==null&&value!==undefined&&value!=="");
+  return `${title?`<b class="context-group-title">${escapeHtml(title)}</b>`:""}<div class="context-rows">${rows.map(([key,value])=>`<div class="context-row"><b>${escapeHtml(humanLabel(key))}</b><div>${contextValue(value,key)}</div></div>`).join("")}</div>`;
+}
+function actionContext(event){
+  const detail=event.detail;if(!detail)return "";
+  let title=humanLabel(event.kind.replace(/^action\./,"")),body;
+  if(event.kind==="task.updated"&&detail.patch){title="Task update";body=contextObject(detail.patch);}
+  else if(event.kind==="task.created"){title="Task created";body=contextObject(detail);}
+  else body=contextObject(detail);
+  return `<details class="context-card"><summary><span class="context-spark">✣</span><b>${escapeHtml(title)}</b><small>Show details</small></summary><div class="context-body">${body||`<p>No additional details reported.</p>`}</div></details>`;
+}
 
 async function login(token) {
   state.token = token;
@@ -75,7 +96,7 @@ function renderEvents(events) {
   if (!events.length) { timeline.innerHTML = `<div class="empty"><div><strong>#${escapeHtml(state.channel)} is ready</strong>Start a conversation with your humans and agents.</div></div>`; return; }
   const byId = new Map(events.map(event => [event.id, event]));
   const pinned=new Set((state.snapshot.pins||[]).map(pin=>Number(pin.event_id)));
-  timeline.innerHTML = events.map(e => { const profile = profileFor(e.actor), parent = e.parent_id ? byId.get(e.parent_id) : null, parentProfile = parent ? profileFor(parent.actor) : null, attachments=Array.isArray(e.detail?.attachments)?e.detail.attachments:[]; return `<article class="event ${e.actor_role}"><div class="event-avatar">${avatarContent(profile)}</div><div>${parent ? `<button class="reply-quote" data-jump="${parent.id}"><b>${escapeHtml(parentProfile.display_name || parent.actor)}</b><span>${escapeHtml(parent.summary)}</span></button>` : ""}<div class="event-head"><b>${escapeHtml(profile.display_name || e.actor)}</b><span class="role">${escapeHtml(e.actor_role)}</span><time>${relative(e.created_at)}</time><button class="pin-action ${pinned.has(e.id)?"pinned":""}" data-pin="${e.id}" title="${pinned.has(e.id)?"Unpin":"Pin as project guidance"}">${pinned.has(e.id)?"◆":"◇"}</button><button class="reply-action" data-reply="${e.id}" title="Reply">↩ Reply</button></div><p class="event-summary">${formatMessage(e.summary)}</p>${attachments.length?`<div class="event-attachments">${attachments.map(a=>`<button data-load-attachment="${escapeHtml(a.id)}" data-mime="${escapeHtml(a.mime_type)}" data-filename="${escapeHtml(a.filename)}"><b>${escapeHtml(a.filename)}</b><small>${formatBytes(a.size)} · click to open</small></button>`).join("")}</div>`:""}<div class="kind">${escapeHtml(e.kind)}${e.task_id ? ` · TASK #${e.task_id}` : ""}</div>${e.detail ? `<details class="context-card"><summary>Show action context</summary><pre>${escapeHtml(JSON.stringify(e.detail, null, 2))}</pre></details>` : ""}</div></article>`; }).join("");
+  timeline.innerHTML = events.map(e => { const profile = profileFor(e.actor), parent = e.parent_id ? byId.get(e.parent_id) : null, parentProfile = parent ? profileFor(parent.actor) : null, attachments=Array.isArray(e.detail?.attachments)?e.detail.attachments:[]; return `<article class="event ${e.actor_role}"><div class="event-avatar">${avatarContent(profile)}</div><div>${parent ? `<button class="reply-quote" data-jump="${parent.id}"><b>${escapeHtml(parentProfile.display_name || parent.actor)}</b><span>${escapeHtml(parent.summary)}</span></button>` : ""}<div class="event-head"><b>${escapeHtml(profile.display_name || e.actor)}</b><span class="role">${escapeHtml(e.actor_role)}</span><time>${relative(e.created_at)}</time><button class="pin-action ${pinned.has(e.id)?"pinned":""}" data-pin="${e.id}" title="${pinned.has(e.id)?"Unpin":"Pin as project guidance"}">${pinned.has(e.id)?"◆":"◇"}</button><button class="reply-action" data-reply="${e.id}" title="Reply">↩ Reply</button></div><p class="event-summary">${formatMessage(e.summary)}</p>${attachments.length?`<div class="event-attachments">${attachments.map(a=>`<button data-load-attachment="${escapeHtml(a.id)}" data-mime="${escapeHtml(a.mime_type)}" data-filename="${escapeHtml(a.filename)}"><b>${escapeHtml(a.filename)}</b><small>${formatBytes(a.size)} · click to open</small></button>`).join("")}</div>`:""}<div class="kind">${escapeHtml(e.kind)}${e.task_id ? ` · TASK #${e.task_id}` : ""}</div>${actionContext(e)}</div></article>`; }).join("");
   document.querySelectorAll("[data-reply]").forEach(button => button.onclick = () => setReply(events.find(event => event.id === Number(button.dataset.reply))));
   document.querySelectorAll("[data-jump]").forEach(button => button.onclick = () => { const target = document.querySelector(`[data-reply="${button.dataset.jump}"]`)?.closest(".event"); target?.scrollIntoView({ behavior: "smooth", block: "center" }); target?.classList.add("reply-flash"); setTimeout(() => target?.classList.remove("reply-flash"), 1400); });
   document.querySelectorAll("[data-mentioned]").forEach(button => button.onclick = () => { const target = button.dataset.mentioned; if (state.snapshot.me.editableProfiles.includes(target)) openProfile(target); else { const member = state.snapshot.presence.find(person => person.name === target); const line = document.querySelector(`[data-profile-name="${CSS.escape(target)}"]`); line?.scrollIntoView({ behavior: "smooth", block: "nearest" }); button.title = `${profileFor(target).display_name} · ${member?.status || "offline"} · #${member?.active_channel || "general"}`; } });
