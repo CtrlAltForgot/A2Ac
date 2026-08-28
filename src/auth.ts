@@ -26,7 +26,11 @@ function presentedKey(req: Request) {
 }
 
 export function identify(req: Request, credentials: Credential[]): Identity | undefined {
-  const candidate = digest(presentedKey(req));
+  return identifyKey(presentedKey(req), credentials);
+}
+
+export function identifyKey(key: string, credentials: Credential[]): Identity | undefined {
+  const candidate = digest(key);
   const match = credentials.find((item) => timingSafeEqual(item.digest, candidate));
   return match && { name: match.name, role: match.role };
 }

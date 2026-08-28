@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { authMiddleware, identify, loadCredentials } from "./auth.js";
+import { authMiddleware, identifyKey, loadCredentials } from "./auth.js";
 import { handleMcp } from "./mcp.js";
 import { Store } from "./store.js";
 
@@ -54,8 +54,7 @@ httpServer.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   if (url.pathname !== "/ws") return socket.destroy();
   const key = url.searchParams.get("token") ?? "";
-  req.headers.authorization = `Bearer ${key}`;
-  const identity = identify(req as express.Request, credentials);
+  const identity = identifyKey(key, credentials);
   if (!identity) return socket.destroy();
   sockets.handleUpgrade(req, socket, head, (ws) => {
     (ws as WebSocket & { identity?: typeof identity }).identity = identity;
