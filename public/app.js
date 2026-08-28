@@ -70,8 +70,16 @@ $("#composer").onsubmit = async (event) => { event.preventDefault(); const field
 $("#message").onkeydown = event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#composer").requestSubmit(); } };
 $("#refresh").onclick = refresh;
 $("#logout").onclick = () => { localStorage.removeItem("a2ac-token"); location.reload(); };
-$("#add-channel").onclick = async () => { const name = prompt("Channel name")?.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-"); if (name) { state.channel = name; await refresh(); } };
-$("#mobile-tasks").onclick = () => $("#context-panel").classList.toggle("open");
+async function addProjectSpace() {
+  const raw = prompt("Project space name (for example: dig-frenzy)");
+  const name = raw?.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-").replace(/^-+|-+$/g, "");
+  if (!name) return;
+  state.channel = name;
+  await api("/api/events", { method: "POST", body: JSON.stringify({ channel: name, kind: "project.created", summary: `Created project space #${name}` }) });
+  await refresh();
+}
+$("#add-channel").onclick = addProjectSpace;
+$("#add-project-space").onclick = addProjectSpace;
 $("#close-context").onclick = () => $("#context-panel").classList.remove("open");
 $("#new-task").onclick = () => $("#task-dialog").showModal();
 $("#task-form").onsubmit = async event => { if (event.submitter?.value === "cancel") return; event.preventDefault(); await api("/api/tasks", { method: "POST", body: JSON.stringify({ title: $("#task-title").value, description: $("#task-description").value, priority: $("#task-priority").value }) }); $("#task-form").reset(); $("#task-dialog").close(); };
