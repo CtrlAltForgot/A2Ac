@@ -30,6 +30,8 @@ app.get("/health", (_req, res) => res.json({ ok: true, version: "0.1.0" }));
 app.use(express.static(publicDir));
 
 const requireAuth = authMiddleware(credentials);
+const principalFor=(identity:NonNullable<express.Request["identity"]>)=>agentOwners.get(identity.name)??identity.name;
+const allowed=(identity:NonNullable<express.Request["identity"]>,permission:string)=>store.hasPermission(identity,permission,principalFor(identity));
 app.use("/api", requireAuth);
 const editableProfiles = (identity: NonNullable<express.Request["identity"]>) => credentials
   .filter((candidate) => candidate.name === identity.name || identity.role === "admin" || agentOwners.get(candidate.name) === identity.name)
@@ -43,8 +45,8 @@ app.get("/api/snapshot", (req, res) => res.json({
   channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(),
   workspace: store.workspace(), pins: store.pins(String(req.query.channel ?? "general")), events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
 }));
-app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});
-app.delete("/api/channels/:channel/pins/:eventId",(req,res)=>res.json(store.unpin(req.identity!,String(req.params.channel),Number(req.params.eventId))));
+app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot pin guidance"});try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});
+app.delete("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot unpin guidance"});res.json(store.unpin(req.identity!,String(req.params.channel),Number(req.params.eventId)));});
 app.patch("/api/workspace", (req,res)=>{
   if(req.identity!.role!=="admin"&&req.identity!.name!=="owner")return res.status(403).json({error:"Only the workspace owner can change branding"});
   const {name,icon}=req.body??{};
@@ -52,6 +54,9 @@ app.patch("/api/workspace", (req,res)=>{
   if(icon!==undefined&&icon!==null&&(typeof icon!=="string"||icon.length>350000||!/^data:image\/(png|jpeg|webp|gif);base64,/.test(icon)))return res.status(400).json({error:"Workspace icon must be an image under 250 KB"});
   res.json(store.updateWorkspace({name:name.trim(),icon}));
 });
+app.get("/api/roles",(req,res)=>res.json({roles:store.roles(),assignments:store.roleAssignments(),users:credentials.filter(item=>item.role==="human").map(item=>({name:item.name,displayName:(store.ensureProfile(item.name) as {display_name:string}).display_name})),permissions:["delegate_agents","pin_messages","create_tasks","upload_files","manage_channels"]}));
+app.put("/api/roles/:id",(req,res)=>{if(req.identity!.role!=="admin"&&req.identity!.name!=="owner")return res.status(403).json({error:"Only the owner can manage roles"});const id=String(req.params.id).toLowerCase().replace(/[^a-z0-9-_]/g,"-");const valid=["delegate_agents","pin_messages","create_tasks","upload_files","manage_channels"];if(!id||typeof req.body?.name!=="string"||!req.body.name.trim())return res.status(400).json({error:"Role name is required"});res.json(store.saveRole({id,name:req.body.name.trim().slice(0,40),permissions:Array.isArray(req.body.permissions)?req.body.permissions.filter((p:string)=>valid.includes(p)):[]}));});
+app.put("/api/users/:name/role",(req,res)=>{if(req.identity!.role!=="admin"&&req.identity!.name!=="owner")return res.status(403).json({error:"Only the owner can assign roles"});if(!(store.roles() as {id:string}[]).some(role=>role.id===req.body?.roleId))return res.status(400).json({error:"Unknown role"});res.json(store.assignRole(String(req.params.name),req.body.roleId));});
 app.patch("/api/profiles/:name", (req, res) => {
   const target = String(req.params.name);
   if (!editableProfiles(req.identity!).includes(target)) return res.status(403).json({ error: "You can only edit yourself and your assigned agent" });
@@ -61,7 +66,7 @@ app.patch("/api/profiles/:name", (req, res) => {
   if (avatar !== undefined && avatar !== null && (typeof avatar !== "string" || avatar.length > 350_000 || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatar))) return res.status(400).json({ error: "Avatar must be a PNG, JPEG, WebP, or GIF under 250 KB" });
   res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations }));
 });
-app.post("/api/attachments", upload.single("file"), (req, res) => {
+app.post("/api/attachments", (req,res,next)=>{if(!allowed(req.identity!,"upload_files"))return res.status(403).json({error:"Your role cannot upload files"});next();}, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file is required" });
   const id = randomUUID();
   const saved=store.createAttachment(req.identity!, { id, filename: req.file.originalname.slice(0, 240), mimeType: req.file.mimetype || "application/octet-stream", size: req.file.size, storedName: req.file.filename }) as Record<string,unknown>;
@@ -76,11 +81,12 @@ app.get("/api/attachments/:id", (req, res) => {
 app.get("/api/events", (req, res) => res.json(store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))));
 app.post("/api/events", (req, res) => {
   const { channel = "general", kind = "message", summary, detail, taskId, parentId } = req.body ?? {};
+  if(kind==="project.created"&&!allowed(req.identity!,"manage_channels"))return res.status(403).json({error:"Your role cannot create channels"});
   if (typeof summary !== "string" || !summary.trim()) return res.status(400).json({ error: "summary is required" });
   const event = store.event(req.identity!, { channel, kind, summary: summary.trim(), detail, taskId, parentId });
   const normalized = summary.toLowerCase();
   for (const profile of store.profiles() as { name: string; display_name: string; accept_delegations: number }[]) {
-    if (profile.accept_delegations && normalized.includes(`@${profile.display_name.toLowerCase()}`)) {
+    if (allowed(req.identity!,"delegate_agents") && profile.accept_delegations && normalized.includes(`@${profile.display_name.toLowerCase()}`)) {
       try { store.requestDelegation(req.identity!, profile.name, summary.trim(), channel); } catch { /* message still succeeds */ }
     }
   }
@@ -98,6 +104,7 @@ app.post("/api/runner/delegations/:id/finish", (req, res) => {
   catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : "Not found" }); }
 });
 app.post("/api/tasks", (req, res) => {
+  if(!allowed(req.identity!,"create_tasks"))return res.status(403).json({error:"Your role cannot create shared goals"});
   if (typeof req.body?.title !== "string" || !req.body.title.trim()) return res.status(400).json({ error: "title is required" });
   res.status(201).json(store.createTask(req.identity!, req.body));
 });
@@ -107,7 +114,7 @@ app.patch("/api/tasks/:id", (req, res) => {
 });
 
 app.all("/mcp", requireAuth, async (req, res) => {
-  try { await handleMcp(req, res, store); }
+  try { await handleMcp(req, res, store, principalFor(req.identity!)); }
   catch (error) {
     console.error(error);
     if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });

@@ -56,6 +56,12 @@ export class Store {
         channel TEXT NOT NULL, event_id INTEGER NOT NULL, pinned_by TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(channel,event_id)
       );
+      CREATE TABLE IF NOT EXISTS workspace_roles (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, permissions TEXT NOT NULL DEFAULT '[]'
+      );
+      CREATE TABLE IF NOT EXISTS user_roles (
+        user_name TEXT PRIMARY KEY, role_id TEXT NOT NULL REFERENCES workspace_roles(id) ON DELETE CASCADE
+      );
       CREATE INDEX IF NOT EXISTS events_channel_id ON events(channel, id DESC);
       CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, updated_at DESC);
     `);
@@ -69,6 +75,9 @@ export class Store {
     const delegationColumns = this.db.pragma("table_info(delegation_requests)") as { name: string }[];
     if (!delegationColumns.some((column) => column.name === "claimed_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN claimed_at TEXT");
     if (!delegationColumns.some((column) => column.name === "finished_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN finished_at TEXT");
+    this.db.prepare("INSERT OR IGNORE INTO workspace_roles(id,name,permissions) VALUES ('member','Member',?)").run(JSON.stringify(["pin_messages","create_tasks","upload_files","manage_channels"]));
+    this.db.prepare("INSERT OR IGNORE INTO workspace_roles(id,name,permissions) VALUES ('trusted','Trusted collaborator',?)").run(JSON.stringify(["pin_messages","create_tasks","upload_files","manage_channels","delegate_agents"]));
+    this.db.prepare("INSERT OR IGNORE INTO user_roles(user_name,role_id) VALUES ('buddy','trusted')").run();
   }
 
   private parse(row: Record<string, unknown>): Record<string, unknown> {
@@ -203,6 +212,13 @@ export class Store {
     if(input.icon!==undefined){ if(input.icon===null)this.db.prepare("DELETE FROM settings WHERE key='workspace_icon'").run(); else this.db.prepare("INSERT INTO settings(key,value) VALUES ('workspace_icon',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(input.icon); }
     const value=this.workspace();this.onChange("workspace",value);return value;
   }
+
+  roles() { return (this.db.prepare("SELECT * FROM workspace_roles ORDER BY name").all() as {id:string;name:string;permissions:string}[]).map(role=>({...role,permissions:JSON.parse(role.permissions)})); }
+  roleAssignments() { return this.db.prepare("SELECT user_name,role_id FROM user_roles ORDER BY user_name").all(); }
+  permissionsFor(name:string) { const role=this.db.prepare(`SELECT r.permissions FROM workspace_roles r LEFT JOIN user_roles u ON u.role_id=r.id WHERE u.user_name=?`).get(name) as {permissions:string}|undefined;const fallback=this.db.prepare("SELECT permissions FROM workspace_roles WHERE id='member'").get() as {permissions:string}|undefined;return JSON.parse(role?.permissions||fallback?.permissions||"[]") as string[]; }
+  hasPermission(identity:Identity,permission:string,principal=identity.name){return identity.role==="admin"||principal==="owner"||this.permissionsFor(principal).includes(permission);}
+  saveRole(input:{id:string;name:string;permissions:string[]}) { this.db.prepare("INSERT INTO workspace_roles(id,name,permissions) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,permissions=excluded.permissions").run(input.id,input.name,JSON.stringify(input.permissions));const value=this.roles();this.onChange("roles",value);return value; }
+  assignRole(userName:string,roleId:string){this.db.prepare("INSERT INTO user_roles(user_name,role_id) VALUES (?,?) ON CONFLICT(user_name) DO UPDATE SET role_id=excluded.role_id").run(userName,roleId);const value=this.roleAssignments();this.onChange("roles",value);return value;}
 
   updateProfile(name: string, patch: { displayName?: string; avatar?: string | null; acceptDelegations?: boolean }) {
     this.ensureProfile(name);

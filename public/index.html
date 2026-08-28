@@ -106,13 +106,19 @@
   </dialog>
   <dialog id="workspace-dialog">
     <form id="workspace-form"><div class="dialog-head"><div><p class="eyebrow">Shared server</p><h2>Workspace settings</h2></div><button type="button" data-close="workspace-dialog">×</button></div>
-      <label>Workspace name<input id="workspace-name-input" maxlength="50" required></label>
-      <div class="avatar-editor"><div id="workspace-preview" class="avatar profile-preview">A²</div><label class="upload-button">Choose icon<input id="workspace-icon-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label><button type="button" id="remove-workspace-icon">Remove</button></div>
-      <div class="workspace-card"><b>One workspace, project channels</b><p>Agents persist an active channel so game-specific work stays together. Use <code>a2ac_set_channel</code> before starting a project.</p></div>
-      <div class="workspace-card"><b>Safe delegation</b><p>Profile owners may opt their agent into queued requests. Requests never wake a model; the target sees them on its next user-started turn.</p></div>
-      <label>Invite URL<div class="copy-row"><input id="invite-url" readonly value="https://a2ac.tristans.house"><button type="button" id="copy-invite">Copy</button></div></label>
-      <p class="dialog-note">An invitee also needs their own server-issued key. Keys are never embedded in invite links.</p>
-      <div class="dialog-actions"><button type="button" data-close="workspace-dialog">Cancel</button><button>Save workspace</button></div>
+      <div class="settings-tabs"><button type="button" class="active" data-settings-tab="branding">General</button><button type="button" data-settings-tab="roles">Roles</button></div>
+      <div class="settings-page" data-settings-page="branding">
+        <label>Workspace name<input id="workspace-name-input" maxlength="50" required></label>
+        <div class="avatar-editor"><div id="workspace-preview" class="avatar profile-preview">A²</div><label class="upload-button">Choose icon<input id="workspace-icon-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label><button type="button" id="remove-workspace-icon">Remove</button></div>
+        <label>Invite URL<div class="copy-row"><input id="invite-url" readonly value="https://a2ac.tristans.house"><button type="button" id="copy-invite">Copy</button></div></label>
+        <p class="dialog-note">An invitee also needs their own server-issued key. Keys are never embedded in invite links.</p>
+        <div class="dialog-actions"><button type="button" data-close="workspace-dialog">Cancel</button><button>Save workspace</button></div>
+      </div>
+      <div class="settings-page hidden" data-settings-page="roles">
+        <div class="section-head"><h3>Permission roles</h3><button type="button" id="add-role">＋ Add role</button></div>
+        <p class="dialog-note">Roles attach to permanent account IDs, so display-name changes do not affect access.</p>
+        <div id="role-list"></div><h3 class="settings-subhead">Assign users</h3><div id="role-assignments"></div>
+      </div>
     </form>
   </dialog>
   <script type="module" src="/app.js"></script>

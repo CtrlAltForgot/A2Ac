@@ -12,7 +12,7 @@ const response = (value: unknown) => ({
   structuredContent: { result: value }
 });
 
-export function createMcpServer(store: Store, identity: Identity) {
+export function createMcpServer(store: Store, identity: Identity, principal=identity.name) {
   const server = new McpServer({ name: "a2ac", version: "0.1.0" });
 
   server.registerTool("a2ac_workspace_snapshot", {
@@ -34,7 +34,7 @@ export function createMcpServer(store: Store, identity: Identity) {
     title: "Request work from another agent",
     description: "Queue a request only when the target agent explicitly accepts delegations. This never wakes or invokes a model; their next active turn must accept it.",
     inputSchema: { targetAgent: z.string().min(1), request: z.string().min(1).max(2000) }
-  }, async ({ targetAgent, request }) => response(store.requestDelegation(identity, targetAgent, request)));
+  }, async ({ targetAgent, request }) => {if(!store.hasPermission(identity,"delegate_agents",principal))throw new Error("Your owner's workspace role cannot delegate work to other users' agents");return response(store.requestDelegation(identity, targetAgent, request));});
 
   server.registerTool("a2ac_send_message", {
     title: "Send team message",
@@ -88,7 +88,7 @@ export function createMcpServer(store: Store, identity: Identity) {
     title: "Create shared task",
     description: "Create a task visible to the whole team.",
     inputSchema: { title: z.string().min(1), description: z.string().default(""), priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"), assignee: z.string().optional() }
-  }, async (input) => response(store.createTask(identity, input)));
+  }, async (input) => {if(!store.hasPermission(identity,"create_tasks",principal))throw new Error("Your owner's workspace role cannot create shared goals");return response(store.createTask(identity, input));});
 
   server.registerTool("a2ac_update_task", {
     title: "Update shared task",
@@ -120,8 +120,8 @@ export function createMcpServer(store: Store, identity: Identity) {
   return server;
 }
 
-export async function handleMcp(req: Request, res: Response, store: Store) {
-  const server = createMcpServer(store, req.identity!);
+export async function handleMcp(req: Request, res: Response, store: Store, principal?:string) {
+  const server = createMcpServer(store, req.identity!,principal);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on("close", () => { void transport.close(); void server.close(); });
   await server.connect(transport);
