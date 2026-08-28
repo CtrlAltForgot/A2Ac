@@ -1,0 +1,14 @@
+services:
+  a2ac:
+    build: .
+    container_name: a2ac
+    restart: unless-stopped
+    ports:
+      - "3210:3210"
+    environment:
+      PORT: "3210"
+      DATA_DIR: /data
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3210}
+      A2AC_IDENTITIES: ${A2AC_IDENTITIES:-owner:change-me:human}
+    volumes:
+      - ./data:/data
