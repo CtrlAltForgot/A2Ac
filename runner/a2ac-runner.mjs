@@ -59,7 +59,9 @@ console.log("A2Ac runner service started; local arming is currently required bef
 for (;;) {
   try {
     const state = await json(statePath);
-    if ((state.persistent||state.enabledUntil > Date.now()) && state.jobsRemaining !== 0) {
+    const armed=(state.persistent||state.enabledUntil>Date.now())&&state.jobsRemaining!==0;
+    await api("/api/runner/heartbeat",{method:"POST",body:JSON.stringify({armed})});
+    if (armed) {
       if(!state.armedAt){state.armedAt=Date.now();await save(statePath,state);}
       const me=await api("/api/me");
       const previousChannel=me.profile?.active_channel||"general";
@@ -67,10 +69,11 @@ for (;;) {
       if (request) {
         await save(statePath, { ...state, jobsRemaining: state.jobsRemaining > 0 ? state.jobsRemaining - 1 : -1 });
         let outcome;
-        await api("/api/runner/typing",{method:"POST",body:JSON.stringify({active:true,channel:request.channel,parentId:request.source_event_id||null})});
+        await api("/api/runner/typing",{method:"POST",body:JSON.stringify({active:true,stage:"thinking",channel:request.channel,parentId:request.source_event_id||null})});
+        const workingTimer=setTimeout(()=>api("/api/runner/typing",{method:"POST",body:JSON.stringify({active:true,stage:"working",channel:request.channel,parentId:request.source_event_id||null})}).catch(()=>{}),8_000);
         try { outcome = await runCodex(request,previousChannel); } catch (error) { outcome = { status: "failed", result: error instanceof Error ? error.message : String(error) }; }
         if(outcome.usageWarning)await api(`/api/profiles/${encodeURIComponent(me.name)}`,{method:"PATCH",body:JSON.stringify({workCapacity:"conserve",capacityNote:`Codex runner reported a real usage/rate-limit warning at ${new Date().toLocaleString()}.`})}).catch(error=>console.error("Could not publish capacity warning:",error.message));
-        try{await api(`/api/runner/delegations/${request.id}/finish`, { method: "POST", body: JSON.stringify(outcome) });}finally{await api("/api/runner/typing",{method:"POST",body:JSON.stringify({active:false})}).catch(()=>{});await api("/api/runner/channel",{method:"POST",body:JSON.stringify({channel:previousChannel})});}
+        try{await api(`/api/runner/delegations/${request.id}/finish`, { method: "POST", body: JSON.stringify(outcome) });}finally{clearTimeout(workingTimer);await api("/api/runner/typing",{method:"POST",body:JSON.stringify({active:false})}).catch(()=>{});await api("/api/runner/channel",{method:"POST",body:JSON.stringify({channel:previousChannel})});}
       }
     }
   } catch (error) { console.error(new Date().toISOString(), error instanceof Error ? error.message : error); }

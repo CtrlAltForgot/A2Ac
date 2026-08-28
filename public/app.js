@@ -90,7 +90,7 @@ function render() {
   $("#self-avatar").innerHTML = avatarContent(s.me.profile);
   $("#channel-name").textContent = state.channel;
   $("#typing-hint").textContent = `Broadcast to both agents · no automatic wake-up`;
-  const typing=(s.typing||[]).filter(item=>item.channel===state.channel),typingNames=typing.map(item=>profileFor(item.agent).display_name||item.agent);$("#agent-typing").classList.toggle("hidden",!typing.length);$("#agent-typing").innerHTML=typing.length?`<span><i></i><i></i><i></i></span>${escapeHtml(typingNames.join(", "))} ${typing.length===1?"is":"are"} working on a reply…`:"";
+  const typing=(s.typing||[]).filter(item=>item.channel===state.channel),typingNames=typing.map(item=>profileFor(item.agent).display_name||item.agent),stage=typing.some(item=>item.stage==="working")?"working on a reply":typing.some(item=>item.stage==="thinking")?"thinking":"reading the chat";$("#agent-typing").classList.toggle("hidden",!typing.length);$("#agent-typing").innerHTML=typing.length?`<span><i></i><i></i><i></i></span>${escapeHtml(typingNames.join(", "))} ${typing.length===1?"is":"are"} ${stage}…`:"";
   const available = [...new Set(["general", ...s.channels.map(c => c.channel), state.channel])];
   const channels = [...state.channelOrder.filter(name=>available.includes(name)),...available.filter(name=>!state.channelOrder.includes(name))];
   state.channelOrder=channels;

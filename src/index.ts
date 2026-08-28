@@ -25,7 +25,8 @@ const app = express();
 const httpServer = createServer(app);
 const sockets = new WebSocketServer({ noServer: true });
 type LiveSocket=WebSocket&{identity?:{name:string;role:string};isAlive?:boolean};
-const runnerTyping=new Map<string,{agent:string;channel:string;parentId:number|null;expiresAt:number}>();
+const runnerTyping=new Map<string,{agent:string;channel:string;parentId:number|null;stage:"reading"|"thinking"|"working";expiresAt:number}>();
+const runnerReady=new Map<string,number>();
 const broadcast=(type:string,value:unknown)=>{const payload=JSON.stringify({type,value});for(const client of sockets.clients)if(client.readyState===WebSocket.OPEN)client.send(payload);};
 const activeTyping=()=>{const now=Date.now();for(const [agent,value] of runnerTyping)if(value.expiresAt<=now)runnerTyping.delete(agent);return[...runnerTyping.values()];};
 const liveHumanNames = () => new Set([...sockets.clients]
@@ -105,7 +106,7 @@ app.post("/api/events", (req, res) => {
   if(kind==="project.created"&&!allowed(req.identity!,"manage_channels"))return res.status(403).json({error:"Your role cannot create channels"});
   if (typeof summary !== "string" || !summary.trim()) return res.status(400).json({ error: "summary is required" });
   const event = store.event(req.identity!, { channel, kind, summary: summary.trim(), detail, taskId, parentId });
-  if(req.identity!.role!=="agent"&&kind==="message")for(const candidate of credentials.filter(item=>item.role==="agent")){store.ensureProfile(candidate.name);if(ambientWorthy(summary.trim(),detail))store.queueAmbientReply(req.identity!,candidate.name,event as {id:number;channel:string;summary:string});}
+  if(req.identity!.role!=="agent"&&kind==="message")for(const candidate of credentials.filter(item=>item.role==="agent")){store.ensureProfile(candidate.name);if(!ambientWorthy(summary.trim(),detail))continue;const queued=store.queueAmbientReply(req.identity!,candidate.name,event as {id:number;channel:string;summary:string});if(queued&&(runnerReady.get(candidate.name)??0)>Date.now()){runnerTyping.set(candidate.name,{agent:candidate.name,channel,parentId:Number((event as {id:number}).id),stage:"reading",expiresAt:Date.now()+10*60_000});broadcast("typing",activeTyping());}}
   const normalized = summary.toLowerCase();
   for (const profile of store.profiles() as { name: string; display_name: string; accept_delegations: number }[]) {
     if (allowed(req.identity!,"delegate_agents") && profile.accept_delegations && normalized.includes(`@${profile.display_name.toLowerCase()}`)) {
@@ -128,10 +129,11 @@ app.post("/api/runner/channel",(req,res)=>{
 });
 app.post("/api/runner/typing",(req,res)=>{
   if(req.identity!.role!=="agent")return res.status(403).json({error:"Agent identity required"});
-  if(req.body?.active){const channel=String(req.body.channel??store.activeChannel(req.identity!.name));const parentId=Number(req.body.parentId)||null;runnerTyping.set(req.identity!.name,{agent:req.identity!.name,channel,parentId,expiresAt:Date.now()+10*60_000});}
+  if(req.body?.active){const channel=String(req.body.channel??store.activeChannel(req.identity!.name));const parentId=Number(req.body.parentId)||null;const stage=["reading","thinking","working"].includes(req.body.stage)?req.body.stage:"thinking";runnerTyping.set(req.identity!.name,{agent:req.identity!.name,channel,parentId,stage,expiresAt:Date.now()+10*60_000});}
   else runnerTyping.delete(req.identity!.name);
   const value=activeTyping();broadcast("typing",value);res.json({typing:value});
 });
+app.post("/api/runner/heartbeat",(req,res)=>{if(req.identity!.role!=="agent")return res.status(403).json({error:"Agent identity required"});if(req.body?.armed)runnerReady.set(req.identity!.name,Date.now()+30_000);else runnerReady.delete(req.identity!.name);res.json({ready:runnerReady.has(req.identity!.name)});});
 app.post("/api/runner/delegations/:id/finish", (req, res) => {
   if (req.identity!.role !== "agent") return res.status(403).json({ error: "Agent identity required" });
   const status = req.body?.status;
