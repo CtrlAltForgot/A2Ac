@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", snapshot: null, ws: null };
+const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", snapshot: null, ws: null, seen: {}, seenKey: "" };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "content-type": "application/json", authorization: `Bearer ${state.token}`, ...options.headers } });
@@ -23,6 +23,16 @@ async function login(token) {
 
 async function refresh() {
   state.snapshot = await api(`/api/snapshot?channel=${encodeURIComponent(state.channel)}`);
+  if (!state.seenKey) {
+    state.seenKey = `a2ac-seen-${state.snapshot.me.name}`;
+    try { state.seen = JSON.parse(localStorage.getItem(state.seenKey) || "{}"); } catch { state.seen = {}; }
+  }
+  const current = state.snapshot.channels.find(channel => channel.channel === state.channel);
+  const latestVisible = Math.max(Number(state.snapshot.events.at(-1)?.id || 0), Number(current?.last_event_id || 0));
+  if (latestVisible > (state.seen[state.channel] || 0)) {
+    state.seen[state.channel] = latestVisible;
+    localStorage.setItem(state.seenKey, JSON.stringify(state.seen));
+  }
   render();
 }
 
@@ -32,7 +42,7 @@ function render() {
   $("#channel-name").textContent = state.channel;
   $("#typing-hint").textContent = `Broadcast to both agents · no automatic wake-up`;
   const channels = new Set(["general", ...s.channels.map(c => c.channel), state.channel]);
-  $("#channels").innerHTML = [...channels].map(name => `<button class="channel ${name === state.channel ? "active" : ""}" data-channel="${escapeHtml(name)}"><span>#</span>${escapeHtml(name)}</button>`).join("");
+  $("#channels").innerHTML = [...channels].map(name => { const info = s.channels.find(channel => channel.channel === name); const unread = name !== state.channel && Number(info?.last_event_id || 0) > Number(state.seen[name] || 0); return `<button class="channel ${name === state.channel ? "active" : ""}" data-channel="${escapeHtml(name)}"><span>#</span>${escapeHtml(name)}${unread ? `<i class="unread-blip" title="New activity"></i>` : ""}</button>`; }).join("");
   document.querySelectorAll("[data-channel]").forEach(el => el.onclick = async () => { state.channel = el.dataset.channel; await refresh(); });
   $("#online-count").textContent = s.presence.length;
   $("#presence").innerHTML = s.presence.map(p => { const editable = s.me.editableProfiles.includes(p.name); return `<button class="person ${editable ? "editable" : ""}" ${editable ? `data-profile="${escapeHtml(p.name)}"` : "disabled"}><div class="person-avatar">${avatarContent(p)}<i></i></div><div><b>${escapeHtml(p.display_name || p.name)}</b><small>${escapeHtml(p.current_task || p.status)} · #${escapeHtml(p.active_channel || "general")}</small></div></button>`; }).join("");
