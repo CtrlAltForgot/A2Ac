@@ -1,0 +1,8 @@
+.team-task-list { max-height: 320px; overflow-y: auto; scrollbar-width: thin; }
+.team-task { padding: 11px; margin-bottom: 8px; border: 1px solid #2b354d; border-radius: 9px; background: #101727; }
+.team-task > div { display: flex; align-items: flex-start; gap: 8px; }
+.team-task b { flex: 1; font-size: 11px; line-height: 1.45; }
+.team-task .task-status { flex: none; font: 500 8px DM Mono; text-transform: uppercase; }
+.team-task p { max-height: 82px; overflow-y: auto; margin: 7px 0; color: #8994aa; font-size: 10px; line-height: 1.5; }
+.team-task footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #667189; font: 500 8px DM Mono; text-transform: uppercase; }
+.team-task footer button { border: 0; background: transparent; color: #8b7cff; font-size: 8px; cursor: pointer; }

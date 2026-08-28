@@ -25,7 +25,7 @@ export class Store {
         id INTEGER PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'open', priority TEXT NOT NULL DEFAULT 'normal',
         assignee TEXT, created_by TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
-        started_at TEXT,
+        started_at TEXT, channel TEXT NOT NULL DEFAULT 'general',
         created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS claims (
@@ -78,6 +78,7 @@ export class Store {
       this.db.exec("ALTER TABLE tasks ADD COLUMN started_at TEXT");
       this.db.exec("UPDATE tasks SET started_at=updated_at WHERE status IN ('in_progress','blocked')");
     }
+    if (!taskColumns.some((column) => column.name === "channel")) this.db.exec("ALTER TABLE tasks ADD COLUMN channel TEXT NOT NULL DEFAULT 'general'");
     const delegationColumns = this.db.pragma("table_info(delegation_requests)") as { name: string }[];
     if (!delegationColumns.some((column) => column.name === "claimed_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN claimed_at TEXT");
     if (!delegationColumns.some((column) => column.name === "finished_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN finished_at TEXT");
@@ -151,17 +152,18 @@ export class Store {
 
   unpin(identity: Identity, channel:string,eventId:number){this.db.prepare("DELETE FROM pins WHERE channel=? AND event_id=?").run(channel,eventId);this.onChange("pin",{channel,eventId,removed:true,actor:identity.name});return{removed:true};}
 
-  createTask(identity: Identity, input: { title: string; description?: string; priority?: string; assignee?: string }) {
-    const result = this.db.prepare(`INSERT INTO tasks (title, description, priority, assignee, created_by)
-      VALUES (?, ?, ?, ?, ?)`).run(input.title, input.description ?? "", input.priority ?? "normal", input.assignee ?? null, identity.name);
+  createTask(identity: Identity, input: { title: string; description?: string; priority?: string; assignee?: string; channel?:string }) {
+    const channel=input.channel??this.activeChannel(identity.name);
+    const result = this.db.prepare(`INSERT INTO tasks (title, description, priority, assignee, created_by, channel)
+      VALUES (?, ?, ?, ?, ?, ?)`).run(input.title, input.description ?? "", input.priority ?? "normal", input.assignee ?? null, identity.name,channel);
     const value = this.task(Number(result.lastInsertRowid));
-    this.event(identity, { kind: "task.created", summary: `Created task: ${input.title}`, taskId: Number(result.lastInsertRowid), detail: value });
+    this.event(identity, { channel,kind: "task.created", summary: `Created ${input.assignee==="team"?"team mission":"task"}: ${input.title}`, taskId: Number(result.lastInsertRowid), detail: value });
     this.onChange("task", value);
     return value;
   }
 
   task(id: number) { return this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id); }
-  tasks() { return this.db.prepare("SELECT * FROM tasks ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, updated_at DESC").all(); }
+  tasks(channel?:string) { return channel?this.db.prepare("SELECT * FROM tasks WHERE channel=? ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, updated_at DESC").all(channel):this.db.prepare("SELECT * FROM tasks ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, updated_at DESC").all(); }
 
   updateTask(identity: Identity, id: number, patch: { status?: string; assignee?: string | null; description?: string; expectedVersion?: number }) {
     const current = this.task(id) as Record<string, unknown> | undefined;

@@ -92,7 +92,7 @@ function render() {
   $("#online-count").textContent = s.presence.length;
   $("#presence").innerHTML = s.presence.map(p => { const editable = s.me.editableProfiles.includes(p.name), activity = p.current_task ? "working" : p.status; return `<button class="person ${editable ? "editable" : ""}" data-profile-name="${escapeHtml(p.name)}" ${editable ? `data-profile="${escapeHtml(p.name)}"` : "disabled"}><div class="person-avatar">${avatarContent(p)}<i></i></div><div><b>${escapeHtml(p.display_name || p.name)}</b><small>${escapeHtml(activity)} · #${escapeHtml(p.active_channel || "general")}</small></div></button>`; }).join("");
   document.querySelectorAll("[data-profile]").forEach(el => el.onclick = () => openProfile(el.dataset.profile));
-  renderEvents(s.events); renderActivities(s.activities||[]); renderPins(s.pins||[]); renderClaims(s.claims);
+  renderEvents(s.events); renderActivities(s.activities||[]); renderTeamTasks(s.tasks||[]); renderPins(s.pins||[]); renderClaims(s.claims);
 }
 
 function renderEvents(events) {
@@ -116,6 +116,7 @@ function renderActivities(activities) {
   $("#activity-count").textContent=`${activities.length} active`;
   $("#tasks").innerHTML=activities.length?activities.map(activity=>{const agent=profileFor(activity.agent),status=String(activity.status).replace("_"," "),timing=activity.status==="working"?`Working for ${elapsed(activity.started_at)}`:`${status} · updated ${elapsed(activity.updated_at)} ago`;return `<article class="task activity-card"><div class="task-top"><b>${escapeHtml(activity.title)}</b><i class="activity-dot status-${escapeHtml(activity.status)}"></i></div>${activity.description?`<p>${escapeHtml(activity.description)}</p>`:""}<div class="task-agent"><span class="task-agent-avatar">${avatarContent(agent)}</span><div><b>${escapeHtml(agent.display_name||agent.name)}</b><small class="status-${escapeHtml(activity.status)}">${escapeHtml(timing)}</small></div></div><div class="task-meta"><span class="task-status status-${escapeHtml(activity.status)}">${escapeHtml(status)}</span><span>#${escapeHtml(activity.channel)}</span></div></article>`;}).join(""):`<p class="no-items">No agents are actively working.</p>`;
 }
+function renderTeamTasks(tasks){const active=tasks.filter(task=>task.assignee==="team"&&!['done','cancelled'].includes(task.status));$("#team-tasks").innerHTML=active.length?active.map(task=>`<article class="team-task"><div><b>${escapeHtml(task.title)}</b><span class="task-status status-${escapeHtml(task.status)}">${escapeHtml(task.status.replace('_',' '))}</span></div>${task.description?`<p>${escapeHtml(task.description)}</p>`:""}<footer><span>${escapeHtml(task.priority)} · #${escapeHtml(task.channel||state.channel)}</span><button data-complete-team-task="${task.id}">Mark complete</button></footer></article>`).join(""):`<p class="no-items">No active team missions.</p>`;document.querySelectorAll("[data-complete-team-task]").forEach(button=>button.onclick=async()=>{await api(`/api/tasks/${button.dataset.completeTeamTask}`,{method:"PATCH",body:JSON.stringify({status:"done"})});await refresh();});}
 function renderPins(pins){$("#pin-count").textContent=`${pins.length} pinned`;$("#pins").innerHTML=pins.length?pins.map(pin=>`<article class="pin"><b>${escapeHtml(pin.summary)}</b><small>${escapeHtml(profileFor(pin.actor).display_name||pin.actor)} · project instruction</small><button data-unpin="${pin.event_id}" title="Unpin">×</button></article>`).join(""):`<p class="no-items">No project guidance pinned.</p>`;document.querySelectorAll("[data-unpin]").forEach(button=>button.onclick=async()=>{await api(`/api/channels/${encodeURIComponent(state.channel)}/pins/${button.dataset.unpin}`,{method:"DELETE"});await refresh();});}
 function renderClaims(claims) {
   $("#claim-count").textContent = `${claims.length} active`;
@@ -175,8 +176,8 @@ async function addProjectSpace() {
 $("#add-channel").onclick = addProjectSpace;
 $("#add-project-space").onclick = addProjectSpace;
 $("#close-context").onclick = () => $("#context-panel").classList.remove("open");
-$("#new-task")?.addEventListener("click",()=>$("#task-dialog").showModal());
-$("#task-form").onsubmit = async event => { if (event.submitter?.value === "cancel") return; event.preventDefault(); await api("/api/tasks", { method: "POST", body: JSON.stringify({ title: $("#task-title").value, description: $("#task-description").value, priority: $("#task-priority").value }) }); $("#task-form").reset(); $("#task-dialog").close(); };
+$("#new-team-task").onclick=()=>$("#task-dialog").showModal();
+$("#task-form").onsubmit = async event => { event.preventDefault(); await api("/api/tasks", { method: "POST", body: JSON.stringify({ title: $("#task-title").value, description: $("#task-description").value, priority: $("#task-priority").value,assignee:"team",channel:state.channel,wakeModels:$("#task-wake-models").checked }) }); $("#task-form").reset(); $("#task-dialog").close(); };
 
 let pendingAvatar;
 function openProfile(target = state.snapshot.me.name) {

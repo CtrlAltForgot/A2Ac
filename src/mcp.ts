@@ -21,7 +21,7 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
     inputSchema: { channel: z.string().optional().describe("Omit to use your persisted active channel"), eventLimit: z.number().int().min(1).max(100).default(30) }
   }, async ({ channel, eventLimit }) => {
     const activeChannel = channel ?? store.activeChannel(identity.name);
-    return response({ identity, activeChannel, availableChannels:store.channels(), pinnedGuidance: store.pins(activeChannel), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit), usageGuide:{trigger:"When the user says to use or coordinate through A2Ac, follow this automatically.",startup:"Choose the best semantic channel from availableChannels (create a slug only if none fits), then load a2ac_project_context.",during:"Maintain one concise Activity card; obey pins/context; claim narrowly before edits; post meaningful progress/decisions/questions/actions/handoffs; read replies between major collaborative steps.",finish:"Release every claim and set Activity to idle/completed so it disappears.",tokenPolicy:"No background polling, extra model turns, automatic wake-ups, or noisy per-tool messages."} });
+    return response({ identity, activeChannel, availableChannels:store.channels(), pinnedGuidance: store.pins(activeChannel), activities: store.activities(), tasks: store.tasks(activeChannel), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit), usageGuide:{trigger:"When the user says to use or coordinate through A2Ac, follow this automatically.",startup:"Choose the best semantic channel from availableChannels (create a slug only if none fits), then load a2ac_project_context.",during:"Maintain one concise Activity card; obey pins/context; claim narrowly before edits; post meaningful progress/decisions/questions/actions/handoffs; read replies between major collaborative steps.",teamMissions:"Team-assigned tasks are passive shared objectives. During active turns, coordinate in-channel, divide work into narrow agent tasks/claims, avoid duplication, and delegate only when authorized and useful.",finish:"Release every claim and set Activity to idle/completed so it disappears.",tokenPolicy:"Actual account token quotas are not visible. Use reported availability/workload and explicit human limits; never invent quota data, background poll, create extra turns, automatically wake agents, or send noisy per-tool messages."} });
   });
 
   server.registerTool("a2ac_update_activity", {
@@ -64,7 +64,7 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
     inputSchema: { channel: z.string().optional().describe("Omit to use your active channel"), messageLimit: z.number().int().min(10).max(250).default(80) }
   }, async ({ channel, messageLimit }) => {
     const selected = channel ?? store.activeChannel(identity.name);
-    return response({ channel: selected, availableChannels:store.channels(), pinnedGuidance: store.pins(selected), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), delegationRequests: store.delegationsFor(identity.name), recentMessages: store.events(selected, 0, messageLimit) });
+    return response({ channel: selected, availableChannels:store.channels(), pinnedGuidance: store.pins(selected), activities: store.activities(), tasks: store.tasks(selected), claims: store.claims(), delegationRequests: store.delegationsFor(identity.name), recentMessages: store.events(selected, 0, messageLimit),teamCoordination:"Team missions are passive. Coordinate during existing turns with messages, replies, narrow agent tasks/claims, and authorized delegation. Actual token quotas are unavailable; use visible workload and human-stated limits, and never wake agents automatically." });
   });
 
   server.registerTool("a2ac_read_pinned_guidance", {
@@ -102,7 +102,7 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
   server.registerTool("a2ac_create_task", {
     title: "Create shared task",
     description: "Create a task visible to the whole team.",
-    inputSchema: { title: z.string().min(1), description: z.string().default(""), priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"), assignee: z.string().optional() }
+    inputSchema: { title: z.string().min(1), description: z.string().default(""), priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"), assignee: z.string().optional().describe("Use 'team' for a passive shared mission, or a stable agent ID for individual work"), channel:z.string().optional().describe("Omit to use the active project channel") }
   }, async (input) => {if(!store.hasPermission(identity,"create_tasks",principal))throw new Error("Your owner's workspace role cannot create shared goals");return response(store.createTask(identity, input));});
 
   server.registerTool("a2ac_update_task", {

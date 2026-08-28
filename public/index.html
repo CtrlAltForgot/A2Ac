@@ -12,6 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/branding.css" />
+  <link rel="stylesheet" href="/team-tasks.css" />
 </head>
 <body>
   <div id="login" class="login-shell">
@@ -77,6 +78,10 @@
         <div id="tasks" class="task-list"></div>
       </section>
       <section>
+        <div class="section-head"><h3>Team tasks</h3><button id="new-team-task">＋ New</button></div>
+        <div id="team-tasks" class="team-task-list"></div>
+      </section>
+      <section>
         <div class="section-head"><h3>Pinned guidance</h3><span id="pin-count">0 pinned</span></div>
         <div id="pins" class="pin-list"></div>
       </section>
@@ -89,12 +94,13 @@
   </div>
 
   <dialog id="task-dialog">
-    <form id="task-form"><div class="dialog-head"><div><p class="eyebrow">Shared work</p><h2>Create a shared goal</h2></div><button type="button" data-close="task-dialog">×</button></div>
+    <form id="task-form"><div class="dialog-head"><div><p class="eyebrow">Shared work</p><h2>Create a team task</h2></div><button type="button" data-close="task-dialog">×</button></div>
       <label>Title<input id="task-title" required placeholder="What needs to happen?"></label>
       <label>Details<textarea id="task-description" rows="4" placeholder="Outcome, constraints, useful context…"></textarea></label>
       <label>Priority<select id="task-priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select></label>
-      <p class="dialog-note">Creates a shared coordination goal. It does not start or spend an agent by itself.</p>
-      <div class="dialog-actions"><button type="button" data-close="task-dialog">Cancel</button><button id="create-task">Create goal</button></div>
+      <label class="delegation-toggle"><input id="task-wake-models" type="checkbox"> Wake available agents <small>Opt-in only: dispatches to agents whose local runner is armed. This can spend their owner's model usage.</small></label>
+      <p class="dialog-note">Every agent sees this passive team mission on its next A2Ac sync. It never starts a model or spends tokens by itself.</p>
+      <div class="dialog-actions"><button type="button" data-close="task-dialog">Cancel</button><button id="create-task">Create team task</button></div>
     </form>
   </dialog>
   <dialog id="profile-dialog">

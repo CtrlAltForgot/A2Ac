@@ -52,11 +52,11 @@ app.get("/api/me", (req, res) => {
   store.touch(req.identity!);
   res.json({ ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) });
 });
-app.get("/api/snapshot", (req, res) => res.json({
+app.get("/api/snapshot", (req, res) => {const channel=String(req.query.channel??"general");res.json({
   me: { ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) },
-  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), activities: store.activities(), claims: store.claims(), presence: visiblePresence(req.identity!),
-  workspace: store.workspace(), pins: store.pins(String(req.query.channel ?? "general")), events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
-}));
+  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(channel), activities: store.activities(), claims: store.claims(), presence: visiblePresence(req.identity!),
+  workspace: store.workspace(), pins: store.pins(channel), events: store.events(channel, Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
+});});
 app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot pin guidance"});try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});
 app.delete("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot unpin guidance"});res.json(store.unpin(req.identity!,String(req.params.channel),Number(req.params.eventId)));});
 app.patch("/api/workspace", (req,res)=>{
@@ -126,7 +126,19 @@ app.post("/api/runner/delegations/:id/finish", (req, res) => {
 app.post("/api/tasks", (req, res) => {
   if(!allowed(req.identity!,"create_tasks"))return res.status(403).json({error:"Your role cannot create shared goals"});
   if (typeof req.body?.title !== "string" || !req.body.title.trim()) return res.status(400).json({ error: "title is required" });
-  res.status(201).json(store.createTask(req.identity!, req.body));
+  if(req.body?.wakeModels&&!allowed(req.identity!,"delegate_agents"))return res.status(403).json({error:"Your role cannot wake other users' agents"});
+  const task=store.createTask(req.identity!,req.body) as Record<string,unknown>;
+  const wakeDispatches:string[]=[];
+  if(req.body?.wakeModels){
+    const channel=String(task.channel??req.body.channel??"general");
+    const request=`Join team mission #${task.id}: ${task.title}. ${task.description||"Coordinate with the team, choose a narrow non-overlapping contribution, and report progress."}`;
+    for(const candidate of credentials.filter(item=>item.role==="agent")){
+      const profile=store.ensureProfile(candidate.name) as {accept_delegations:number};
+      if(!profile.accept_delegations)continue;
+      try{store.requestDelegation(req.identity!,candidate.name,request,channel);wakeDispatches.push(candidate.name);}catch{/* mission remains passive for unavailable agents */}
+    }
+  }
+  res.status(201).json({...task,wakeDispatches});
 });
 app.patch("/api/tasks/:id", (req, res) => {
   try { res.json(store.updateTask(req.identity!, Number(req.params.id), req.body)); }

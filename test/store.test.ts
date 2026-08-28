@@ -32,6 +32,16 @@ test("task versions reject stale agent updates", () => {
   assert.throws(() => store.updateTask(alice, task.id, { status: "done", expectedVersion: task.version }), /Version conflict/);
 });
 
+test("team missions stay scoped to their project channel", () => {
+  const store = setup();
+  store.setActiveChannel(alice, "dig-frenzy");
+  const mission = store.createTask(alice, { title: "Ship the mining loop", assignee: "team" }) as { assignee: string; channel: string };
+  assert.equal(mission.assignee, "team");
+  assert.equal(mission.channel, "dig-frenzy");
+  assert.equal(store.tasks("dig-frenzy").length, 1);
+  assert.equal(store.tasks("general").length, 0);
+});
+
 test("profiles keep stable IDs while display names, avatars, and channels change", () => {
   const store = setup();
   store.touch(alice);
