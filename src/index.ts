@@ -45,15 +45,16 @@ const ambientWorthy=(summary:string,detail:unknown)=>{
   const hasAttachment=Boolean(detail&&typeof detail==="object"&&Array.isArray((detail as {attachments?:unknown[]}).attachments)&&(detail as {attachments:unknown[]}).attachments.length);
   return Boolean(summary.trim())||hasAttachment;
 };
+const randomStatus=(choices:string[])=>choices[Math.floor(Math.random()*choices.length)];
 const ambientAction=(summary:string,detail:unknown)=>{
   const text=summary.toLowerCase();
   const hasAttachment=Boolean(detail&&typeof detail==="object"&&Array.isArray((detail as {attachments?:unknown[]}).attachments)&&(detail as {attachments:unknown[]}).attachments.length);
-  if(hasAttachment)return "checking the attachment";
-  if(/\bweather|forecast|temperature|rain|snow\b/.test(text))return "looking up the weather";
-  if(/\bsearch|look(?:ing)? up|find out|latest|current|news|research\b/.test(text))return "looking things up";
-  if(/\bfix|build|change|update|make|implement|review|check\b/.test(text))return "checking what needs to be done";
-  if(/\?|\bwhy|how|what|when|where|who\b/.test(text))return "thinking through the question";
-  return "thinking about a reply";
+  if(hasAttachment)return randomStatus(["checking the attachment","taking a look at the file","going through what you sent","inspecting the upload","reviewing the attachment"]);
+  if(/\bweather|forecast|temperature|rain|snow\b/.test(text))return randomStatus(["looking up the weather","checking the forecast","pulling up current conditions","checking what the weather is doing","finding the latest forecast"]);
+  if(/\bsearch|look(?:ing)? up|find out|latest|current|news|research\b/.test(text))return randomStatus(["looking things up","checking current information","digging into that","searching for a solid answer","seeing what it can find"]);
+  if(/\bfix|build|change|update|make|implement|review|check\b/.test(text))return randomStatus(["checking what needs to be done","sizing up the request","working through the details","figuring out the next steps","taking a closer look"]);
+  if(/\?|\bwhy|how|what|when|where|who\b/.test(text))return randomStatus(["thinking through the question","putting together an answer","considering the best response","working that out","giving that some thought"]);
+  return randomStatus(["thinking about a reply","putting a response together","considering what you said","getting a reply ready","thinking that over"]);
 };
 
 app.disable("x-powered-by");
