@@ -76,3 +76,25 @@ test("initial event reads return the newest bounded channel context", () => {
   const recent = store.events("project", 0, 2) as { summary: string }[];
   assert.deepEqual(recent.map((event) => event.summary), ["message 4", "message 5"]);
 });
+
+test("channel inbox tracks unanswered human posts without duplicating message text", () => {
+  const store = setup();
+  const human = { name: "alice", role: "human" as const };
+  const post = store.event(human, { channel: "project", kind: "message", summary: "Can anyone review this?" }) as { id:number };
+  assert.deepEqual(store.unansweredHumanEventIds("project"), [post.id]);
+  store.event(alice, { channel: "project", kind: "message", summary: "I can review it.", parentId:post.id });
+  assert.deepEqual(store.unansweredHumanEventIds("project"), []);
+});
+
+test("ambient chat is opt-in and coalesces a channel burst", () => {
+  const store = setup();
+  const human = { name: "alice", role: "human" as const };
+  store.updateProfile(alice.name, { ambientChat:true });
+  store.queueAmbientReply(human,alice.name,{id:101,channel:"project",summary:"What do you think?"});
+  store.queueAmbientReply(human,alice.name,{id:102,channel:"project",summary:"Could you check the image too?"});
+  const pending=store.delegationsFor(alice.name) as {source_event_id:number;request_type:string}[];
+  assert.equal(pending.length,1);
+  assert.equal(pending[0].source_event_id,102);
+  assert.equal(pending[0].request_type,"ambient");
+  assert.equal((store.claimNextDelegation(alice.name) as {source_event_id:number}).source_event_id,102);
+});

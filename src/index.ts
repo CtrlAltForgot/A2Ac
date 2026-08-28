@@ -35,6 +35,10 @@ const visiblePresence = (viewer?: { name: string; role: string }) => {
   return (store.presence() as { name: string; role: string; last_seen: string }[]).filter((person) =>
     person.role === "agent" ? new Date(`${person.last_seen}Z`).getTime() >= agentCutoff : humans.has(person.name));
 };
+const ambientWorthy=(summary:string,detail:unknown)=>{
+  const hasAttachment=Boolean(detail&&typeof detail==="object"&&Array.isArray((detail as {attachments?:unknown[]}).attachments)&&(detail as {attachments:unknown[]}).attachments.length);
+  return Boolean(summary.trim())||hasAttachment;
+};
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
@@ -76,7 +80,7 @@ app.patch("/api/profiles/:name", (req, res) => {
   const avatar = req.body?.avatar;
   if (displayName !== undefined && (typeof displayName !== "string" || !displayName.trim() || displayName.trim().length > 40)) return res.status(400).json({ error: "Display name must be 1-40 characters" });
   if (avatar !== undefined && avatar !== null && (typeof avatar !== "string" || avatar.length > 350_000 || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatar))) return res.status(400).json({ error: "Avatar must be a PNG, JPEG, WebP, or GIF under 250 KB" });
-  res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations }));
+  res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations,ambientChat:req.body?.ambientChat }));
 });
 app.post("/api/attachments", (req,res,next)=>{if(!allowed(req.identity!,"upload_files"))return res.status(403).json({error:"Your role cannot upload files"});next();}, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file is required" });
@@ -96,6 +100,7 @@ app.post("/api/events", (req, res) => {
   if(kind==="project.created"&&!allowed(req.identity!,"manage_channels"))return res.status(403).json({error:"Your role cannot create channels"});
   if (typeof summary !== "string" || !summary.trim()) return res.status(400).json({ error: "summary is required" });
   const event = store.event(req.identity!, { channel, kind, summary: summary.trim(), detail, taskId, parentId });
+  if(req.identity!.role!=="agent"&&kind==="message")for(const candidate of credentials.filter(item=>item.role==="agent")){store.ensureProfile(candidate.name);if(ambientWorthy(summary.trim(),detail))store.queueAmbientReply(req.identity!,candidate.name,event as {id:number;channel:string;summary:string});}
   const normalized = summary.toLowerCase();
   for (const profile of store.profiles() as { name: string; display_name: string; accept_delegations: number }[]) {
     if (allowed(req.identity!,"delegate_agents") && profile.accept_delegations && normalized.includes(`@${profile.display_name.toLowerCase()}`)) {

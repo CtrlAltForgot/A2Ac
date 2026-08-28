@@ -39,11 +39,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS profiles (
         name TEXT PRIMARY KEY, display_name TEXT NOT NULL, avatar TEXT,
         active_channel TEXT NOT NULL DEFAULT 'general', accept_delegations INTEGER NOT NULL DEFAULT 0,
+        ambient_chat INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS delegation_requests (
         id INTEGER PRIMARY KEY, requester TEXT NOT NULL, target_agent TEXT NOT NULL,
         channel TEXT NOT NULL, request TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+        request_type TEXT NOT NULL DEFAULT 'delegation', source_event_id INTEGER,
         created_at TEXT NOT NULL DEFAULT (datetime('now')), claimed_at TEXT, finished_at TEXT
       );
       CREATE TABLE IF NOT EXISTS attachments (
@@ -73,6 +75,7 @@ export class Store {
     `);
     const profileColumns = this.db.pragma("table_info(profiles)") as { name: string }[];
     if (!profileColumns.some((column) => column.name === "accept_delegations")) this.db.exec("ALTER TABLE profiles ADD COLUMN accept_delegations INTEGER NOT NULL DEFAULT 0");
+    if (!profileColumns.some((column) => column.name === "ambient_chat")) this.db.exec("ALTER TABLE profiles ADD COLUMN ambient_chat INTEGER NOT NULL DEFAULT 0");
     const taskColumns = this.db.pragma("table_info(tasks)") as { name: string }[];
     if (!taskColumns.some((column) => column.name === "started_at")) {
       this.db.exec("ALTER TABLE tasks ADD COLUMN started_at TEXT");
@@ -82,6 +85,9 @@ export class Store {
     const delegationColumns = this.db.pragma("table_info(delegation_requests)") as { name: string }[];
     if (!delegationColumns.some((column) => column.name === "claimed_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN claimed_at TEXT");
     if (!delegationColumns.some((column) => column.name === "finished_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN finished_at TEXT");
+    if (!delegationColumns.some((column) => column.name === "request_type")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'delegation'");
+    if (!delegationColumns.some((column) => column.name === "source_event_id")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN source_event_id INTEGER");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ambient_reply_once ON delegation_requests(target_agent,source_event_id) WHERE source_event_id IS NOT NULL");
     this.db.prepare("INSERT OR IGNORE INTO workspace_roles(id,name,permissions) VALUES ('member','Member',?)").run(JSON.stringify(["pin_messages","create_tasks","upload_files","manage_channels"]));
     this.db.prepare("INSERT OR IGNORE INTO workspace_roles(id,name,permissions) VALUES ('trusted','Trusted collaborator',?)").run(JSON.stringify(["pin_messages","create_tasks","upload_files","manage_channels","delegate_agents"]));
     this.db.prepare("INSERT OR IGNORE INTO user_roles(user_name,role_id) VALUES ('buddy','trusted')").run();
@@ -116,6 +122,13 @@ export class Store {
       ? this.db.prepare("SELECT * FROM events WHERE channel = ? AND id > ? ORDER BY id ASC LIMIT ?").all(channel, after, capped)
       : this.db.prepare("SELECT * FROM (SELECT * FROM events WHERE channel = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC").all(channel, capped);
     return (rows as Record<string, unknown>[]).map((row) => this.parse(row));
+  }
+
+  unansweredHumanEventIds(channel:string,limit=20){
+    return (this.db.prepare(`SELECT e.id FROM events e
+      WHERE e.channel=? AND e.actor_role!='agent' AND e.kind='message'
+      AND NOT EXISTS (SELECT 1 FROM events reply WHERE reply.parent_id=e.id AND reply.actor_role='agent')
+      ORDER BY e.id DESC LIMIT ?`).all(channel,Math.max(1,Math.min(limit,50))) as {id:number}[]).map(row=>row.id);
   }
 
   channels() {
@@ -257,12 +270,13 @@ export class Store {
   saveRole(input:{id:string;name:string;permissions:string[]}) { this.db.prepare("INSERT INTO workspace_roles(id,name,permissions) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,permissions=excluded.permissions").run(input.id,input.name,JSON.stringify(input.permissions));const value=this.roles();this.onChange("roles",value);return value; }
   assignRole(userName:string,roleId:string){this.db.prepare("INSERT INTO user_roles(user_name,role_id) VALUES (?,?) ON CONFLICT(user_name) DO UPDATE SET role_id=excluded.role_id").run(userName,roleId);const value=this.roleAssignments();this.onChange("roles",value);return value;}
 
-  updateProfile(name: string, patch: { displayName?: string; avatar?: string | null; acceptDelegations?: boolean }) {
+  updateProfile(name: string, patch: { displayName?: string; avatar?: string | null; acceptDelegations?: boolean; ambientChat?:boolean }) {
     this.ensureProfile(name);
     const current = this.profile(name) as { display_name: string; avatar: string | null };
     this.db.prepare("UPDATE profiles SET display_name=?, avatar=?, updated_at=datetime('now') WHERE name=?")
       .run(patch.displayName ?? current.display_name, patch.avatar === undefined ? current.avatar : patch.avatar, name);
     if (patch.acceptDelegations !== undefined) this.db.prepare("UPDATE profiles SET accept_delegations=? WHERE name=?").run(patch.acceptDelegations ? 1 : 0, name);
+    if (patch.ambientChat !== undefined) this.db.prepare("UPDATE profiles SET ambient_chat=? WHERE name=?").run(patch.ambientChat ? 1 : 0, name);
     const value = this.profile(name);
     this.onChange("profile", value);
     return value;
@@ -293,15 +307,28 @@ export class Store {
     return value;
   }
 
+  queueAmbientReply(identity:Identity,targetAgent:string,event:{id:number;channel:string;summary:string}){
+    const profile=this.ensureProfile(targetAgent) as {ambient_chat:number};
+    if(!profile.ambient_chat)return null;
+    const pending=this.db.prepare("SELECT id FROM delegation_requests WHERE target_agent=? AND channel=? AND request_type='ambient' AND status='pending' ORDER BY id DESC LIMIT 1").get(targetAgent,event.channel) as {id:number}|undefined;
+    if(pending){this.db.prepare("UPDATE delegation_requests SET requester=?,request=?,source_event_id=?,created_at=datetime('now') WHERE id=?").run(identity.name,event.summary,event.id,pending.id);return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(pending.id);}
+    const result=this.db.prepare(`INSERT OR IGNORE INTO delegation_requests(requester,target_agent,channel,request,request_type,source_event_id)
+      VALUES (?,?,?,?, 'ambient',?)`).run(identity.name,targetAgent,event.channel,event.summary,event.id);
+    if(!result.changes)return null;
+    return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(result.lastInsertRowid);
+  }
+
   delegationsFor(name: string) { return this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id").all(name); }
 
   claimNextDelegation(targetAgent: string, notBefore?: string) {
     const claim = this.db.transaction(() => {
-      const profile = this.profile(targetAgent) as { accept_delegations: number } | undefined;
-      if (!profile?.accept_delegations) return null;
+      const profile = this.profile(targetAgent) as { accept_delegations: number; ambient_chat:number } | undefined;
+      if (!profile?.accept_delegations&&!profile?.ambient_chat) return null;
       this.db.prepare("UPDATE delegation_requests SET status='pending',claimed_at=NULL WHERE target_agent=? AND status='running' AND claimed_at < datetime('now','-2 hours')").run(targetAgent);
       if (notBefore) this.db.prepare("UPDATE delegation_requests SET status='expired',finished_at=datetime('now') WHERE target_agent=? AND status='pending' AND created_at < ?").run(targetAgent, notBefore);
-      const next = this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id LIMIT 1").get(targetAgent) as { id: number } | undefined;
+      const next = this.db.prepare(`SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending'
+        AND ((request_type='ambient' AND ? AND NOT EXISTS(SELECT 1 FROM delegation_requests recent WHERE recent.target_agent=? AND recent.request_type='ambient' AND recent.finished_at>datetime('now','-45 seconds'))) OR (request_type!='ambient' AND ?)) ORDER BY id LIMIT 1`)
+        .get(targetAgent,profile.ambient_chat?1:0,targetAgent,profile.accept_delegations?1:0) as { id: number } | undefined;
       if (!next) return null;
       this.db.prepare("UPDATE delegation_requests SET status='running',claimed_at=datetime('now') WHERE id=? AND status='pending'").run(next.id);
       return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(next.id);
@@ -310,10 +337,11 @@ export class Store {
   }
 
   finishDelegation(identity: Identity, id: number, status: "completed" | "failed", result: string) {
-    const current = this.db.prepare("SELECT * FROM delegation_requests WHERE id=? AND target_agent=?").get(id, identity.name) as { channel: string } | undefined;
+    const current = this.db.prepare("SELECT * FROM delegation_requests WHERE id=? AND target_agent=?").get(id, identity.name) as { channel: string;request_type:string } | undefined;
     if (!current) throw new Error("Delegation request not found");
     this.db.prepare("UPDATE delegation_requests SET status=?,finished_at=datetime('now'), request=request || char(10) || char(10) || 'Runner result: ' || ? WHERE id=?")
       .run(status, result.slice(0, 4000), id);
+    if(current.request_type==="ambient"){this.onChange("delegation",{id,status});return{id,status};}
     return this.event(identity, { channel: current.channel, kind: `delegation.${status}`, summary: `Delegated task #${id} ${status}`, detail: { delegationId: id, result } });
   }
 

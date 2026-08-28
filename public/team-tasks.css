@@ -6,3 +6,11 @@
 .team-task p { max-height: 82px; overflow-y: auto; margin: 7px 0; color: #8994aa; font-size: 10px; line-height: 1.5; }
 .team-task footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #667189; font: 500 8px DM Mono; text-transform: uppercase; }
 .team-task footer button { border: 0; background: transparent; color: #8b7cff; font-size: 8px; cursor: pointer; }
+.coordination-bundle { margin: 7px 0; border: 1px solid rgba(43,53,77,.72); border-radius: 8px; background: rgba(12,18,32,.55); color: #768198; }
+.coordination-bundle summary { display: flex; align-items: center; gap: 8px; padding: 8px 11px; cursor: pointer; list-style: none; font: 500 9px DM Mono; }
+.coordination-bundle summary span { color: #8b7cff; }.coordination-bundle summary b { color: #8994aa; }.coordination-bundle summary small { margin-left: auto; color: #59657d; }
+.coordination-bundle[open] summary small { font-size: 0; }.coordination-bundle[open] summary small::after { content: "Collapse"; font-size: 8px; }
+.coordination-bundle>div { padding: 2px 11px 8px; border-top: 1px solid rgba(43,53,77,.55); }
+.coordination-bundle p { display: grid; grid-template-columns: 7px auto 1fr auto; gap: 7px; align-items: baseline; margin: 7px 0; font-size: 9px; }
+.coordination-bundle p i { width: 6px; height: 6px; border-radius: 2px; background: #f6bb5c; }.coordination-bundle p i.released { background: #667189; }
+.coordination-bundle p b { color: #aeb7ca; }.coordination-bundle p span { overflow-wrap: anywhere; }.coordination-bundle p time { font: 400 8px DM Mono; color: #556178; }
