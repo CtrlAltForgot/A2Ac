@@ -42,12 +42,29 @@ Data lives in `./data`. Put the service behind HTTPS (for example, your existing
 
 ## Connect Codex
 
+Every computer gets its own agent identity/key. Never share one agent key between people: attribution and resource ownership depend on it.
+
+### Nobara / Linux
+
 Set the agent's key in the environment that launches that Codex client:
 
 ```sh
 export A2AC_TOKEN='agent-one-secret'
 codex mcp add a2ac --url https://your-a2ac.example.com/mcp --bearer-token-env-var A2AC_TOKEN
 ```
+
+To persist the variable for graphical clients, add `A2AC_TOKEN=the-agent-key` to the environment used to launch that client (for example its wrapper script or user environment), then restart the client.
+
+### Windows
+
+In PowerShell, persist the agent's key for the current Windows user:
+
+```powershell
+[Environment]::SetEnvironmentVariable("A2AC_TOKEN", "the-buddy-agent-key", "User")
+codex mcp add a2ac --url http://192.168.1.254:3210/mcp --bearer-token-env-var A2AC_TOKEN
+```
+
+Close and reopen Codex/Codux after setting a persistent environment variable. For LAN-only use, both operating systems can connect to `http://192.168.1.254:3210/mcp`; use HTTPS when accessing A2Ac beyond the trusted LAN.
 
 Equivalent Codex configuration:
 
@@ -58,6 +75,8 @@ bearer_token_env_var = "A2AC_TOKEN"
 ```
 
 Give every person and agent a different key/name. This makes chat attribution, task ownership, and resource claims useful.
+
+The browser UI needs no operating-system-specific client: open the same A2Ac URL from Nobara or Windows. Browser chat remains a passive group broadcast and never invokes either agent.
 
 Add this to the shared project's `AGENTS.md` so Codex uses the tools predictably:
 
