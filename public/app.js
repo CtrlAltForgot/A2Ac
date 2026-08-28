@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", channelKey: "", snapshot: null, ws: null, seen: {}, seenKey: "", channelOrder: [], channelOrderKey: "", draggedChannel: null, replyTo: null, mention: null, attachments: [], openContexts: new Set(), contextAutoOpen: false, contextAutoOpenAfter: 0 };
+const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", channelKey: "", snapshot: null, ws: null, seen: {}, seenKey: "", channelOrder: [], channelOrderKey: "", draggedChannel: null, replyTo: null, mention: null, attachments: [], openContexts: new Set(), contextAutoOpen: false, contextAutoOpenAfter: 0,typingVisible:new Set(),typingTimers:new Map() };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "content-type": "application/json", authorization: `Bearer ${state.token}`, ...options.headers } });
@@ -53,6 +53,7 @@ function actionContext(event){
 const isCoordinationNoise=event=>event.kind==="claim.acquired"||event.kind==="claim.released";
 function compactTimeline(events){const items=[];for(let index=0;index<events.length;){if(!isCoordinationNoise(events[index])){items.push(events[index++]);continue;}const grouped=[];while(index<events.length&&isCoordinationNoise(events[index]))grouped.push(events[index++]);items.push({coordinationBundle:grouped});}return items;}
 function coordinationBundle(events){const profile=profileFor(events.at(-1).actor),actors=new Set(events.map(event=>event.actor));return `<details class="coordination-bundle"><summary><span class="coordination-avatar">${avatarContent(profile)}</span><span class="coordination-copy"><b>${actors.size===1?escapeHtml(profile.display_name||profile.name):"Team coordination"}</b><small>↔ ${events.length} resource update${events.length===1?"":"s"}</small></span><em>Expand</em></summary><div>${events.map(event=>`<p><i class="${event.kind==="claim.acquired"?"acquired":"released"}"></i><b>${escapeHtml(profileFor(event.actor).display_name||event.actor)}</b><span>${escapeHtml(event.summary)}</span><time>${relative(event.created_at)}</time></p>`).join("")}</div></details>`;}
+function renderTyping(raw=[]){const current=raw.filter(item=>item.channel===state.channel),active=new Set(current.map(item=>item.agent));for(const [agent,timer] of state.typingTimers)if(!active.has(agent)){clearTimeout(timer);state.typingTimers.delete(agent);}for(const agent of [...state.typingVisible])if(!active.has(agent))state.typingVisible.delete(agent);for(const item of current)if(!state.typingVisible.has(item.agent)&&!state.typingTimers.has(item.agent)){const timer=setTimeout(()=>{state.typingTimers.delete(item.agent);if((state.snapshot?.typing||[]).some(activeItem=>activeItem.agent===item.agent&&activeItem.channel===state.channel)){state.typingVisible.add(item.agent);renderTyping(state.snapshot.typing);}},300+Math.random()*1200);state.typingTimers.set(item.agent,timer);}const typing=current.filter(item=>state.typingVisible.has(item.agent)),typingNames=typing.map(item=>profileFor(item.agent).display_name||item.agent),stage=typing.some(item=>item.stage==="working")?"working on a reply":typing.some(item=>item.stage==="thinking")?"thinking":"reading the chat";$("#agent-typing").classList.toggle("hidden",!typing.length);$("#agent-typing").innerHTML=typing.length?`<span><i></i><i></i><i></i></span>${escapeHtml(typingNames.join(", "))} ${typing.length===1?"is":"are"} ${stage}…`:"";}
 
 async function login(token) {
   state.token = token;
@@ -90,7 +91,7 @@ function render() {
   $("#self-avatar").innerHTML = avatarContent(s.me.profile);
   $("#channel-name").textContent = state.channel;
   $("#typing-hint").textContent = `Broadcast to both agents · no automatic wake-up`;
-  const typing=(s.typing||[]).filter(item=>item.channel===state.channel),typingNames=typing.map(item=>profileFor(item.agent).display_name||item.agent),stage=typing.some(item=>item.stage==="working")?"working on a reply":typing.some(item=>item.stage==="thinking")?"thinking":"reading the chat";$("#agent-typing").classList.toggle("hidden",!typing.length);$("#agent-typing").innerHTML=typing.length?`<span><i></i><i></i><i></i></span>${escapeHtml(typingNames.join(", "))} ${typing.length===1?"is":"are"} ${stage}…`:"";
+  renderTyping(s.typing||[]);
   const available = [...new Set(["general", ...s.channels.map(c => c.channel), state.channel])];
   const channels = [...state.channelOrder.filter(name=>available.includes(name)),...available.filter(name=>!state.channelOrder.includes(name))];
   state.channelOrder=channels;

@@ -106,7 +106,24 @@ app.post("/api/events", (req, res) => {
   if(kind==="project.created"&&!allowed(req.identity!,"manage_channels"))return res.status(403).json({error:"Your role cannot create channels"});
   if (typeof summary !== "string" || !summary.trim()) return res.status(400).json({ error: "summary is required" });
   const event = store.event(req.identity!, { channel, kind, summary: summary.trim(), detail, taskId, parentId });
-  if(req.identity!.role!=="agent"&&kind==="message")for(const candidate of credentials.filter(item=>item.role==="agent")){store.ensureProfile(candidate.name);if(!ambientWorthy(summary.trim(),detail))continue;const queued=store.queueAmbientReply(req.identity!,candidate.name,event as {id:number;channel:string;summary:string});if(queued&&(runnerReady.get(candidate.name)??0)>Date.now()){runnerTyping.set(candidate.name,{agent:candidate.name,channel,parentId:Number((event as {id:number}).id),stage:"reading",expiresAt:Date.now()+10*60_000});broadcast("typing",activeTyping());}}
+  if(req.identity!.role==="agent"){
+    // A posted reply is the completion signal users care about; do not leave a stale
+    // "working" indicator around while the short-lived runner wraps up.
+    if(runnerTyping.delete(req.identity!.name))broadcast("typing",activeTyping());
+  }else if(kind==="message"&&ambientWorthy(summary.trim(),detail)){
+    // Dispatch each ambient post to one live, opted-in runner. The store also guards
+    // source_event_id globally so concurrent web requests cannot fan one post out.
+    const now=Date.now();
+    const candidates=credentials.filter(item=>item.role==="agent"&&(runnerReady.get(item.name)??0)>now)
+      .filter(item=>Boolean((store.ensureProfile(item.name) as {ambient_chat:number}).ambient_chat));
+    for(const candidate of candidates){
+      const queued=store.queueAmbientReply(req.identity!,candidate.name,event as {id:number;channel:string;summary:string});
+      if(!queued)continue;
+      runnerTyping.set(candidate.name,{agent:candidate.name,channel,parentId:Number((event as {id:number}).id),stage:"reading",expiresAt:Date.now()+10*60_000});
+      broadcast("typing",activeTyping());
+      break;
+    }
+  }
   const normalized = summary.toLowerCase();
   for (const profile of store.profiles() as { name: string; display_name: string; accept_delegations: number }[]) {
     if (allowed(req.identity!,"delegate_agents") && profile.accept_delegations && normalized.includes(`@${profile.display_name.toLowerCase()}`)) {

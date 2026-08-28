@@ -90,6 +90,11 @@ export class Store {
     if (!delegationColumns.some((column) => column.name === "request_type")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'delegation'");
     if (!delegationColumns.some((column) => column.name === "source_event_id")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN source_event_id INTEGER");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ambient_reply_once ON delegation_requests(target_agent,source_event_id) WHERE source_event_id IS NOT NULL");
+    // Older builds could queue the same human post for several ambient agents. Keep
+    // the earliest dispatch, then enforce one ambient responder per source message.
+    this.db.exec(`DELETE FROM delegation_requests WHERE request_type='ambient' AND source_event_id IS NOT NULL
+      AND id NOT IN (SELECT MIN(id) FROM delegation_requests WHERE request_type='ambient' AND source_event_id IS NOT NULL GROUP BY source_event_id)`);
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ambient_source_reply_once ON delegation_requests(source_event_id) WHERE request_type='ambient' AND source_event_id IS NOT NULL");
     this.db.prepare("INSERT OR IGNORE INTO workspace_roles(id,name,permissions) VALUES ('member','Member',?)").run(JSON.stringify(["pin_messages","create_tasks","upload_files","manage_channels"]));
     this.db.prepare("INSERT OR IGNORE INTO workspace_roles(id,name,permissions) VALUES ('trusted','Trusted collaborator',?)").run(JSON.stringify(["pin_messages","create_tasks","upload_files","manage_channels","delegate_agents"]));
     this.db.prepare("INSERT OR IGNORE INTO user_roles(user_name,role_id) VALUES ('buddy','trusted')").run();
@@ -314,6 +319,8 @@ export class Store {
   queueAmbientReply(identity:Identity,targetAgent:string,event:{id:number;channel:string;summary:string}){
     const profile=this.ensureProfile(targetAgent) as {ambient_chat:number};
     if(!profile.ambient_chat)return null;
+    const alreadyQueued=this.db.prepare("SELECT id FROM delegation_requests WHERE request_type='ambient' AND source_event_id=?").get(event.id);
+    if(alreadyQueued)return null;
     const pending=this.db.prepare("SELECT id FROM delegation_requests WHERE target_agent=? AND channel=? AND request_type='ambient' AND status='pending' ORDER BY id DESC LIMIT 1").get(targetAgent,event.channel) as {id:number}|undefined;
     if(pending){this.db.prepare("UPDATE delegation_requests SET requester=?,request=?,source_event_id=?,created_at=datetime('now') WHERE id=?").run(identity.name,event.summary,event.id,pending.id);return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(pending.id);}
     const result=this.db.prepare(`INSERT OR IGNORE INTO delegation_requests(requester,target_agent,channel,request,request_type,source_event_id)

@@ -98,3 +98,14 @@ test("ambient chat is opt-in and coalesces a channel burst", () => {
   assert.equal(pending[0].request_type,"ambient");
   assert.equal((store.claimNextDelegation(alice.name) as {source_event_id:number}).source_event_id,102);
 });
+
+test("one ambient message is assigned to only one opted-in agent", () => {
+  const store = setup();
+  const human = { name: "owner", role: "human" as const };
+  store.updateProfile(alice.name, { ambientChat:true });
+  store.updateProfile(bob.name, { ambientChat:true });
+  assert.ok(store.queueAmbientReply(human,alice.name,{id:201,channel:"general",summary:"Anyone around?"}));
+  assert.equal(store.queueAmbientReply(human,bob.name,{id:201,channel:"general",summary:"Anyone around?"}),null);
+  assert.equal(store.delegationsFor(alice.name).length,1);
+  assert.equal(store.delegationsFor(bob.name).length,0);
+});
