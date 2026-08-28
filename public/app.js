@@ -53,7 +53,8 @@ async function refresh() {
 function render() {
   const s = state.snapshot; if (!s) return;
   $("#workspace-name").textContent=s.workspace?.name||"A2Ac Studio";
-  $(".mini-logo").innerHTML=s.workspace?.icon?`<img src="${s.workspace.icon}" alt="">`:"A²";
+  $(".mini-logo").textContent="A²";
+  $("#workspace-icon").innerHTML=s.workspace?.icon?`<img src="${s.workspace.icon}" alt="">`:"◎";
   $("#self-avatar").innerHTML = avatarContent(s.me.profile);
   $("#channel-name").textContent = state.channel;
   $("#typing-hint").textContent = `Broadcast to both agents · no automatic wake-up`;

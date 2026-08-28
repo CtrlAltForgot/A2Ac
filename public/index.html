@@ -29,13 +29,13 @@
   <div id="app" class="app hidden">
     <aside class="rail">
       <div class="mini-logo">A²</div>
-      <button class="rail-icon active" title="Workspace settings" id="workspace-settings">◎</button>
+      <button class="rail-icon workspace-icon active" title="Current workspace" id="workspace-icon">◎</button>
       <button class="rail-icon" title="Add project space" id="add-project-space">＋</button>
       <div class="rail-spacer"></div>
       <button id="self-avatar" class="avatar" title="Edit your profile">?</button>
     </aside>
     <aside class="sidebar">
-      <header><div><span class="eyebrow">Workspace</span><h2 id="workspace-name">A2Ac Studio</h2></div><span class="live-dot">LIVE</span></header>
+      <header><div><div class="workspace-label"><button id="workspace-settings" title="Workspace settings">⚙</button><span class="eyebrow">Workspace</span></div><h2 id="workspace-name">A2Ac Studio</h2></div><span class="live-dot">LIVE</span></header>
       <nav>
         <div class="nav-title"><span>Channels</span><button id="add-channel" title="New channel">＋</button></div>
         <div id="channels"></div>
