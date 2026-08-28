@@ -24,11 +24,13 @@ const upload = multer({ storage: multer.diskStorage({ destination: store.uploads
 const app = express();
 const httpServer = createServer(app);
 const sockets = new WebSocketServer({ noServer: true });
+type LiveSocket=WebSocket&{identity?:{name:string;role:string};isAlive?:boolean};
 const runnerTyping=new Map<string,{agent:string;channel:string;parentId:number|null;expiresAt:number}>();
 const broadcast=(type:string,value:unknown)=>{const payload=JSON.stringify({type,value});for(const client of sockets.clients)if(client.readyState===WebSocket.OPEN)client.send(payload);};
 const activeTyping=()=>{const now=Date.now();for(const [agent,value] of runnerTyping)if(value.expiresAt<=now)runnerTyping.delete(agent);return[...runnerTyping.values()];};
 const liveHumanNames = () => new Set([...sockets.clients]
-  .map((client) => (client as WebSocket & { identity?: { name: string; role: string } }).identity)
+  .filter(client=>(client as LiveSocket).isAlive!==false)
+  .map((client) => (client as LiveSocket).identity)
   .filter((identity) => identity?.role !== "agent")
   .map((identity) => identity!.name));
 const visiblePresence = (viewer?: { name: string; role: string }) => {
@@ -184,12 +186,16 @@ httpServer.on("upgrade", (req, socket, head) => {
 });
 
 sockets.on("connection", (socket) => {
+  (socket as LiveSocket).isAlive=true;
+  socket.on("pong",()=>{(socket as LiveSocket).isAlive=true;});
   socket.send(JSON.stringify({ type: "connected" }));
   socket.on("close", () => {
     const payload = JSON.stringify({ type: "presence.changed" });
     for (const client of sockets.clients) if (client.readyState === WebSocket.OPEN) client.send(payload);
   });
 });
+const socketHeartbeat=setInterval(()=>{for(const client of sockets.clients){const live=client as LiveSocket;if(live.isAlive===false){live.terminate();continue;}live.isAlive=false;live.ping();}},20_000);
+sockets.on("close",()=>clearInterval(socketHeartbeat));
 store.onChange = (type, value) => {
   broadcast(type,value);
 };
