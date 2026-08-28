@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", channelKey: "", snapshot: null, ws: null, seen: {}, seenKey: "", channelOrder: [], channelOrderKey: "", draggedChannel: null, replyTo: null, mention: null, attachments: [] };
+const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", channelKey: "", snapshot: null, ws: null, seen: {}, seenKey: "", channelOrder: [], channelOrderKey: "", draggedChannel: null, replyTo: null, mention: null, attachments: [], openContexts: new Set(), contextAutoOpen: false, contextAutoOpenAfter: 0 };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "content-type": "application/json", authorization: `Bearer ${state.token}`, ...options.headers } });
@@ -43,7 +43,8 @@ function actionContext(event){
   if(event.kind==="task.updated"&&detail.patch){title="Task update";body=contextObject(detail.patch);}
   else if(event.kind==="task.created"){title="Task created";body=contextObject(detail);}
   else body=contextObject(detail);
-  return `<details class="context-card"><summary><span class="context-spark">✣</span><b>${escapeHtml(title)}</b><small>Show details</small></summary><div class="context-body">${body||`<p>No additional details reported.</p>`}</div></details>`;
+  const open=state.openContexts.has(event.id)||(state.contextAutoOpen&&event.id>state.contextAutoOpenAfter);
+  return `<details class="context-card" data-context-id="${event.id}" ${open?"open":""}><summary><span class="context-spark">✣</span><b>${escapeHtml(title)}</b><small>${open?"Hide details":"Show details"}</small></summary><div class="context-body">${body||`<p>No additional details reported.</p>`}</div></details>`;
 }
 
 async function login(token) {
@@ -105,6 +106,7 @@ function renderEvents(events) {
   document.querySelectorAll("[data-mentioned]").forEach(button => button.onclick = () => { const target = button.dataset.mentioned; if (state.snapshot.me.editableProfiles.includes(target)) openProfile(target); else { const member = state.snapshot.presence.find(person => person.name === target); const line = document.querySelector(`[data-profile-name="${CSS.escape(target)}"]`); line?.scrollIntoView({ behavior: "smooth", block: "nearest" }); button.title = `${profileFor(target).display_name} · ${member?.status || "offline"} · #${member?.active_channel || "general"}`; } });
   document.querySelectorAll("[data-load-attachment]").forEach(button => button.onclick = () => openAttachment(button));
   document.querySelectorAll("[data-pin]").forEach(button=>button.onclick=async()=>{const id=Number(button.dataset.pin),method=pinned.has(id)?"DELETE":"POST";await api(`/api/channels/${encodeURIComponent(state.channel)}/pins/${id}`,{method});await refresh();});
+  document.querySelectorAll("[data-context-id]").forEach(details=>details.ontoggle=()=>{const id=Number(details.dataset.contextId),label=details.querySelector("summary small");label.textContent=details.open?"Hide details":"Show details";if(details.open){state.openContexts.add(id);state.contextAutoOpen=true;state.contextAutoOpenAfter=Math.max(...events.map(event=>Number(event.id)));}else{state.openContexts.delete(id);state.contextAutoOpen=false;}});
   requestAnimationFrame(() => timeline.scrollTop = timeline.scrollHeight);
 }
 
