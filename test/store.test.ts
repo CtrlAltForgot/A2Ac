@@ -178,3 +178,12 @@ test("renaming a channel preserves its collaboration state", () => {
   assert.ok((store.events("new-project") as {summary:string}[]).some(item=>item.summary==="Posted with stale channel context"));
   assert.equal((store.channels() as {channel:string}[]).some(item=>item.channel==="old-project"),false);
 });
+
+test("an owner can explicitly pause, resume, and clear an activity",()=>{
+  const store=setup();
+  store.updateActivity(alice,{channel:"project",title:"Long operation",status:"working"});
+  assert.equal((store.setActivityStatus(alice.name,"paused") as {status:string}).status,"paused");
+  assert.equal((store.setActivityStatus(alice.name,"working") as {status:string}).status,"working");
+  store.setActivityStatus(alice.name,"clear");
+  assert.equal(store.activities().length,0);
+});

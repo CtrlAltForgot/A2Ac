@@ -186,6 +186,16 @@ export class Store {
 
   activities() { return this.db.prepare("SELECT * FROM agent_activities ORDER BY updated_at DESC").all(); }
 
+  setActivityStatus(agent:string,status:"working"|"paused"|"clear"){
+    if(status==="clear"){
+      this.db.prepare("DELETE FROM agent_activities WHERE agent=?").run(agent);
+      const value={agent,removed:true};this.onChange("activity",value);return value;
+    }
+    const result=this.db.prepare("UPDATE agent_activities SET status=?,updated_at=datetime('now') WHERE agent=?").run(status,agent);
+    if(!result.changes)throw new Error("Activity not found");
+    const value=this.db.prepare("SELECT * FROM agent_activities WHERE agent=?").get(agent);this.onChange("activity",value);return value;
+  }
+
   updateActivity(identity:Identity,input:{channel:string;title:string;description?:string;status:string}) {
     input={...input,channel:this.channelName(input.channel)};
     if(identity.role!=="agent")throw new Error("Agent identity required");

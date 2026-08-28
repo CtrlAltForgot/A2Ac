@@ -110,6 +110,12 @@ app.patch("/api/profiles/:name", (req, res) => {
   if (avatar !== undefined && avatar !== null && (typeof avatar !== "string" || avatar.length > 350_000 || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatar))) return res.status(400).json({ error: "Avatar must be a PNG, JPEG, WebP, or GIF under 250 KB" });
   res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations,ambientChat:req.body?.ambientChat,workCapacity:req.body?.workCapacity,capacityNote:req.body?.capacityNote }));
 });
+app.patch("/api/activities/:agent",(req,res)=>{
+  const target=String(req.params.agent),status=String(req.body?.status??"");
+  if(!editableProfiles(req.identity!).includes(target))return res.status(403).json({error:"You can only control your own assigned agent's activity"});
+  if(!["working","paused","clear"].includes(status))return res.status(400).json({error:"Status must be working, paused, or clear"});
+  try{res.json(store.setActivityStatus(target,status as "working"|"paused"|"clear"));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Activity not found"});}
+});
 app.post("/api/attachments", (req,res,next)=>{if(!allowed(req.identity!,"upload_files"))return res.status(403).json({error:"Your role cannot upload files"});next();}, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "file is required" });
   const id = randomUUID();

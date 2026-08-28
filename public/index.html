@@ -39,7 +39,7 @@
       <button id="self-avatar" class="avatar" title="Edit your profile">?</button>
     </aside>
     <aside class="sidebar">
-      <header><div><div class="workspace-label"><button id="workspace-settings" title="Workspace settings">⚙</button><span class="eyebrow">Workspace</span></div><h2 id="workspace-name">A2Ac Studio</h2></div><span class="live-dot">LIVE</span></header>
+      <header><div><div class="workspace-label"><button id="workspace-settings" title="Workspace settings">⚙</button><span class="eyebrow">Workspace</span></div><h2 id="workspace-name">A2Ac Studio</h2></div></header>
       <nav>
         <div class="nav-title"><span>Channels</span><button id="add-channel" title="New channel">＋</button></div>
         <div id="channels"></div>
@@ -53,8 +53,9 @@
 
     <main class="conversation">
       <header class="conversation-head">
-        <div><p class="channel-kicker">Channel</p><h2># <span id="channel-name">general</span></h2></div>
-        <div class="head-actions"><span id="connection"><i></i> Connected</span><button id="refresh" title="Refresh">↻</button></div>
+        <button id="mobile-channels" class="mobile-head-button" title="Channels">☰</button>
+        <div class="channel-heading"><p class="channel-kicker">Channel</p><h2># <span id="channel-name">general</span></h2></div>
+        <div class="head-actions"><span id="connection"><i></i> Connected</span><button id="refresh" title="Refresh">↻</button><button id="mobile-workboard" class="mobile-head-button" title="Work board">◫</button></div>
       </header>
       <div id="timeline" class="timeline"></div>
       <form id="composer" class="composer">
