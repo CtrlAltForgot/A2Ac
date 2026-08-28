@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", snapshot: null, ws: null, seen: {}, seenKey: "", channelOrder: [], channelOrderKey: "", draggedChannel: null, replyTo: null, mention: null, attachments: [] };
+const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", channelKey: "", snapshot: null, ws: null, seen: {}, seenKey: "", channelOrder: [], channelOrderKey: "", draggedChannel: null, replyTo: null, mention: null, attachments: [] };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "content-type": "application/json", authorization: `Bearer ${state.token}`, ...options.headers } });
@@ -48,7 +48,10 @@ function actionContext(event){
 
 async function login(token) {
   state.token = token;
-  await api("/api/me");
+  const me = await api("/api/me");
+  state.channelKey = `a2ac-active-channel-${me.name}`;
+  const savedChannel = localStorage.getItem(state.channelKey);
+  if (savedChannel && /^[a-z0-9][a-z0-9-_]{0,62}$/.test(savedChannel)) state.channel = savedChannel;
   localStorage.setItem("a2ac-token", token);
   $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
   await refresh(); connect();
@@ -83,7 +86,7 @@ function render() {
   const channels = [...state.channelOrder.filter(name=>available.includes(name)),...available.filter(name=>!state.channelOrder.includes(name))];
   state.channelOrder=channels;
   $("#channels").innerHTML = channels.map(name => { const info = s.channels.find(channel => channel.channel === name); const unread = name !== state.channel && Number(info?.last_event_id || 0) > Number(state.seen[name] || 0); return `<button draggable="true" class="channel ${name === state.channel ? "active" : ""}" data-channel="${escapeHtml(name)}"><span>#</span>${escapeHtml(name)}${unread ? `<i class="unread-blip" title="New activity"></i>` : ""}</button>`; }).join("");
-  document.querySelectorAll("[data-channel]").forEach(el => el.onclick = async () => { state.channel = el.dataset.channel; await refresh(); });
+  document.querySelectorAll("[data-channel]").forEach(el => el.onclick = async () => { state.channel = el.dataset.channel; if(state.channelKey)localStorage.setItem(state.channelKey,state.channel); await refresh(); });
   document.querySelectorAll("#channels [data-channel]").forEach(el=>{el.ondragstart=event=>{state.draggedChannel=el.dataset.channel;el.classList.add("dragging");event.dataTransfer.effectAllowed="move";};el.ondragend=()=>{state.draggedChannel=null;el.classList.remove("dragging");};el.ondragover=event=>{event.preventDefault();event.dataTransfer.dropEffect="move";};el.ondrop=event=>{event.preventDefault();const target=el.dataset.channel,source=state.draggedChannel;if(!source||source===target)return;const order=state.channelOrder.filter(name=>name!==source),index=order.indexOf(target);order.splice(index,0,source);state.channelOrder=order;localStorage.setItem(state.channelOrderKey,JSON.stringify(order));render();};});
   $("#online-count").textContent = s.presence.length;
   $("#presence").innerHTML = s.presence.map(p => { const editable = s.me.editableProfiles.includes(p.name), activity = p.current_task ? "working" : p.status; return `<button class="person ${editable ? "editable" : ""}" data-profile-name="${escapeHtml(p.name)}" ${editable ? `data-profile="${escapeHtml(p.name)}"` : "disabled"}><div class="person-avatar">${avatarContent(p)}<i></i></div><div><b>${escapeHtml(p.display_name || p.name)}</b><small>${escapeHtml(activity)} · #${escapeHtml(p.active_channel || "general")}</small></div></button>`; }).join("");
@@ -163,6 +166,7 @@ async function addProjectSpace() {
   const name = raw?.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-").replace(/^-+|-+$/g, "");
   if (!name) return;
   state.channel = name;
+  if(state.channelKey)localStorage.setItem(state.channelKey,state.channel);
   await api("/api/events", { method: "POST", body: JSON.stringify({ channel: name, kind: "project.created", summary: `Created project space #${name}` }) });
   await refresh();
 }
