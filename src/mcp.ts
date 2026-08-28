@@ -13,7 +13,7 @@ const response = (value: unknown) => ({
 });
 
 export function createMcpServer(store: Store, identity: Identity, principal=identity.name) {
-  const server = new McpServer({ name: "a2ac", version: "0.1.0" }, { instructions: "When the user wants this work coordinated through A2Ac, begin with a2ac_workspace_snapshot. Select the channel matching the current project/topic; if absolutely none exists, choose a short dedicated slug and set it. While actively doing relevant work, maintain exactly one concise card using a2ac_update_activity: short title, brief readable description, and exact status. Update that same card whenever status or focus changes. Send idle or completed immediately when totally done so the card is removed. This reporting uses tool calls during the existing turn only; never start background polling or extra model turns." });
+  const server = new McpServer({ name: "a2ac", version: "0.1.0" }, { instructions: "When work is coordinated through A2Ac, begin with a2ac_workspace_snapshot and inspect availableChannels. Semantically match the current project/topic to the best existing channel; the channel where a command was posted is only its source and is not automatically the work channel. If and only if no existing channel fits, choose a short dedicated project/topic slug; the first Activity or message creates it. While actively doing relevant work, maintain exactly one concise card using a2ac_update_activity with that work channel. Update it whenever status or focus changes, and send idle/completed when totally done. Use tool calls only during the existing turn; never background-poll or start extra model turns." });
 
   server.registerTool("a2ac_workspace_snapshot", {
     title: "Get collaboration snapshot",
@@ -21,7 +21,7 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
     inputSchema: { channel: z.string().optional().describe("Omit to use your persisted active channel"), eventLimit: z.number().int().min(1).max(100).default(30) }
   }, async ({ channel, eventLimit }) => {
     const activeChannel = channel ?? store.activeChannel(identity.name);
-    return response({ identity, activeChannel, pinnedGuidance: store.pins(activeChannel), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit), activityProtocol:"When doing workspace-relevant work, keep exactly one concise activity card current with a2ac_update_activity. Use the relevant existing channel, or create a clear project/topic slug if none exists. Update status whenever it changes. Send idle or completed immediately when totally done to remove the card." });
+    return response({ identity, activeChannel, availableChannels:store.channels(), pinnedGuidance: store.pins(activeChannel), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit), activityProtocol:"Choose the best semantic project/topic match from availableChannels; do not assume a command's source channel is the work channel. Only create a short new slug when none fits. Keep one concise Activity card current and remove it with idle/completed when done." });
   });
 
   server.registerTool("a2ac_update_activity", {
@@ -64,7 +64,7 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
     inputSchema: { channel: z.string().optional().describe("Omit to use your active channel"), messageLimit: z.number().int().min(10).max(250).default(80) }
   }, async ({ channel, messageLimit }) => {
     const selected = channel ?? store.activeChannel(identity.name);
-    return response({ channel: selected, pinnedGuidance: store.pins(selected), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), delegationRequests: store.delegationsFor(identity.name), recentMessages: store.events(selected, 0, messageLimit) });
+    return response({ channel: selected, availableChannels:store.channels(), pinnedGuidance: store.pins(selected), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), delegationRequests: store.delegationsFor(identity.name), recentMessages: store.events(selected, 0, messageLimit) });
   });
 
   server.registerTool("a2ac_read_pinned_guidance", {
@@ -117,14 +117,14 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
   server.registerTool("a2ac_claim_resource", {
     title: "Claim files or subsystem",
     description: "Acquire a short lease on a file path, directory, branch, Roblox subsystem, or other named resource before editing it.",
-    inputSchema: { resource: z.string().min(1), reason: z.string().default(""), ttlMinutes: z.number().int().min(1).max(240).default(30) }
-  }, async ({ resource, reason, ttlMinutes }) => response(store.claim(identity, resource, ttlMinutes, reason)));
+    inputSchema: { resource: z.string().min(1), reason: z.string().default(""), ttlMinutes: z.number().int().min(1).max(240).default(30), channel:z.string().optional().describe("Explicit channel for temporary delegated work; omit for your persistent active channel") }
+  }, async ({ resource, reason, ttlMinutes,channel }) => response(store.claim(identity, resource, ttlMinutes, reason,channel)));
 
   server.registerTool("a2ac_release_resource", {
     title: "Release resource claim",
     description: "Release your resource lease as soon as the edit or handoff is complete.",
-    inputSchema: { resource: z.string().min(1) }
-  }, async ({ resource }) => response(store.release(identity, resource)));
+    inputSchema: { resource: z.string().min(1),channel:z.string().optional().describe("Explicit channel for temporary delegated work") }
+  }, async ({ resource,channel }) => response(store.release(identity, resource,channel)));
 
   server.registerTool("a2ac_heartbeat", {
     title: "Update agent presence",

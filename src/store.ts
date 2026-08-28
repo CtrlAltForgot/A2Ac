@@ -179,7 +179,7 @@ export class Store {
     return value;
   }
 
-  claim(identity: Identity, resource: string, ttlMinutes: number, reason = "") {
+  claim(identity: Identity, resource: string, ttlMinutes: number, reason = "", channel?: string) {
     this.db.prepare("DELETE FROM claims WHERE expires_at <= datetime('now')").run();
     const existing = this.db.prepare("SELECT * FROM claims WHERE resource = ?").get(resource) as { owner: string } | undefined;
     if (existing && existing.owner !== identity.name) throw new Error(`Already claimed by ${existing.owner}`);
@@ -187,15 +187,24 @@ export class Store {
       ON CONFLICT(resource) DO UPDATE SET reason=excluded.reason, expires_at=excluded.expires_at`)
       .run(resource, identity.name, reason, `+${Math.max(1, Math.min(ttlMinutes, 240))} minutes`);
     const value = this.db.prepare("SELECT * FROM claims WHERE resource = ?").get(resource);
-    this.event(identity, { kind: "claim.acquired", summary: `Claimed ${resource}`, detail: value });
+    const eventChannel=channel??this.activeChannel(identity.name);
+    this.event(identity, { channel:eventChannel,kind: "claim.acquired", summary: `Claimed ${resource}`, detail: value });
+    if(identity.role==="agent"){
+      const existing=this.db.prepare("SELECT * FROM agent_activities WHERE agent=?").get(identity.name) as {title:string;description:string;started_at:string}|undefined;
+      const shortResource=resource.split("/").filter(Boolean).at(-1)??resource;
+      this.db.prepare(`INSERT INTO agent_activities(agent,channel,title,description,status) VALUES (?,?,?,?, 'working')
+        ON CONFLICT(agent) DO UPDATE SET channel=excluded.channel,status='working',description=CASE WHEN agent_activities.description='' THEN excluded.description ELSE agent_activities.description END,updated_at=datetime('now')`)
+        .run(identity.name,eventChannel,existing?.title??`Working on ${shortResource}`,existing?.description||reason||`Working with ${resource}`);
+      this.onChange("activity",this.db.prepare("SELECT * FROM agent_activities WHERE agent=?").get(identity.name));
+    }
     this.onChange("claim", value);
     return value;
   }
 
-  release(identity: Identity, resource: string) {
+  release(identity: Identity, resource: string, channel?: string) {
     const result = this.db.prepare("DELETE FROM claims WHERE resource=? AND owner=?").run(resource, identity.name);
     if (!result.changes) throw new Error("Claim not found or owned by another identity");
-    this.event(identity, { kind: "claim.released", summary: `Released ${resource}` });
+    this.event(identity, { channel:channel??this.activeChannel(identity.name),kind: "claim.released", summary: `Released ${resource}` });
     this.onChange("claim", { resource, released: true });
     return { resource, released: true };
   }
@@ -284,11 +293,12 @@ export class Store {
 
   delegationsFor(name: string) { return this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id").all(name); }
 
-  claimNextDelegation(targetAgent: string) {
+  claimNextDelegation(targetAgent: string, notBefore?: string) {
     const claim = this.db.transaction(() => {
       const profile = this.profile(targetAgent) as { accept_delegations: number } | undefined;
       if (!profile?.accept_delegations) return null;
       this.db.prepare("UPDATE delegation_requests SET status='pending',claimed_at=NULL WHERE target_agent=? AND status='running' AND claimed_at < datetime('now','-2 hours')").run(targetAgent);
+      if (notBefore) this.db.prepare("UPDATE delegation_requests SET status='expired',finished_at=datetime('now') WHERE target_agent=? AND status='pending' AND created_at < ?").run(targetAgent, notBefore);
       const next = this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id LIMIT 1").get(targetAgent) as { id: number } | undefined;
       if (!next) return null;
       this.db.prepare("UPDATE delegation_requests SET status='running',claimed_at=datetime('now') WHERE id=? AND status='pending'").run(next.id);

@@ -106,7 +106,15 @@ app.post("/api/events", (req, res) => {
 });
 app.get("/api/runner/delegations/next", (req, res) => {
   if (req.identity!.role !== "agent") return res.status(403).json({ error: "Agent identity required" });
-  res.json({ request: store.claimNextDelegation(req.identity!.name) });
+  const notBeforeMs=Number(req.query.notBefore??0);
+  const notBefore=Number.isFinite(notBeforeMs)&&notBeforeMs>0?new Date(notBeforeMs).toISOString().replace("T"," ").slice(0,19):undefined;
+  res.json({ request: store.claimNextDelegation(req.identity!.name,notBefore) });
+});
+app.post("/api/runner/channel",(req,res)=>{
+  if(req.identity!.role!=="agent")return res.status(403).json({error:"Agent identity required"});
+  const channel=req.body?.channel;
+  if(typeof channel!=="string"||!/^[a-z0-9][a-z0-9-_]{0,62}$/.test(channel))return res.status(400).json({error:"Valid channel is required"});
+  res.json(store.setActiveChannel(req.identity!,channel));
 });
 app.post("/api/runner/delegations/:id/finish", (req, res) => {
   if (req.identity!.role !== "agent") return res.status(403).json({ error: "Agent identity required" });
