@@ -1,0 +1,11 @@
+{
+  "serverUrl": "https://a2ac.tristans.house",
+  "agentKey": "replace-with-agent-key",
+  "codexPath": "/home/user/.local/bin/codex",
+  "maxMinutes": 45,
+  "allowedRequesters": ["buddy", "buddy-agent", "ajax", "ajax-agent"],
+  "projects": {
+    "dig-frenzy": "/home/user/Projects/Roblox Games/DigFrenzy",
+    "bot-commands": "/home/user/Projects/Roblox Games/DigFrenzy"
+  }
+}

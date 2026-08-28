@@ -52,7 +52,25 @@ app.get("/api/events", (req, res) => res.json(store.events(String(req.query.chan
 app.post("/api/events", (req, res) => {
   const { channel = "general", kind = "message", summary, detail, taskId, parentId } = req.body ?? {};
   if (typeof summary !== "string" || !summary.trim()) return res.status(400).json({ error: "summary is required" });
-  res.status(201).json(store.event(req.identity!, { channel, kind, summary: summary.trim(), detail, taskId, parentId }));
+  const event = store.event(req.identity!, { channel, kind, summary: summary.trim(), detail, taskId, parentId });
+  const normalized = summary.toLowerCase();
+  for (const profile of store.profiles() as { name: string; display_name: string; accept_delegations: number }[]) {
+    if (profile.accept_delegations && normalized.includes(`@${profile.display_name.toLowerCase()}`)) {
+      try { store.requestDelegation(req.identity!, profile.name, summary.trim()); } catch { /* message still succeeds */ }
+    }
+  }
+  res.status(201).json(event);
+});
+app.get("/api/runner/delegations/next", (req, res) => {
+  if (req.identity!.role !== "agent") return res.status(403).json({ error: "Agent identity required" });
+  res.json({ request: store.claimNextDelegation(req.identity!.name) });
+});
+app.post("/api/runner/delegations/:id/finish", (req, res) => {
+  if (req.identity!.role !== "agent") return res.status(403).json({ error: "Agent identity required" });
+  const status = req.body?.status;
+  if (!["completed", "failed"].includes(status) || typeof req.body?.result !== "string") return res.status(400).json({ error: "status and result are required" });
+  try { res.json(store.finishDelegation(req.identity!, Number(req.params.id), status, req.body.result)); }
+  catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : "Not found" }); }
 });
 app.post("/api/tasks", (req, res) => {
   if (typeof req.body?.title !== "string" || !req.body.title.trim()) return res.status(400).json({ error: "title is required" });

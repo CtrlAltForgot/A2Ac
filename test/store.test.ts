@@ -28,6 +28,7 @@ test("task versions reject stale agent updates", () => {
   const store = setup();
   const task = store.createTask(alice, { title: "Build inventory" }) as { id: number; version: number };
   store.updateTask(bob, task.id, { assignee: "bob-agent", status: "in_progress", expectedVersion: task.version });
+  assert.ok((store.task(task.id) as { started_at: string }).started_at);
   assert.throws(() => store.updateTask(alice, task.id, { status: "done", expectedVersion: task.version }), /Version conflict/);
 });
 
@@ -52,4 +53,8 @@ test("delegations require explicit target opt-in and never execute work", () => 
   const request = store.requestDelegation(bob, alice.name, "Please review this") as { status: string };
   assert.equal(request.status, "pending");
   assert.equal(store.delegationsFor(alice.name).length, 1);
+  const claimed = store.claimNextDelegation(alice.name) as { id: number; status: string };
+  assert.equal(claimed.status, "running");
+  store.finishDelegation(alice, claimed.id, "completed", "Reviewed successfully");
+  assert.equal(store.delegationsFor(alice.name).length, 0);
 });

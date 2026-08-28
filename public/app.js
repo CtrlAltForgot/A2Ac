@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", snapshot: null, ws: null, seen: {}, seenKey: "" };
+const state = { token: localStorage.getItem("a2ac-token") || "", channel: "general", snapshot: null, ws: null, seen: {}, seenKey: "", replyTo: null };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "content-type": "application/json", authorization: `Bearer ${state.token}`, ...options.headers } });
@@ -10,6 +10,7 @@ async function api(path, options = {}) {
 const initials = (name = "?") => name.split(/[\s-_]+/).map(x => x[0]).join("").slice(0, 2).toUpperCase();
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 const relative = (date) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(`${date}Z`));
+const elapsed = date => { if (!date) return "not started"; const minutes = Math.max(0, Math.floor((Date.now() - new Date(`${date}Z`)) / 60000)); if (minutes < 1) return "just started"; if (minutes < 60) return `${minutes}m`; const hours = Math.floor(minutes / 60), rest = minutes % 60; if (hours < 24) return `${hours}h ${rest}m`; return `${Math.floor(hours / 24)}d ${hours % 24}h`; };
 const profileFor = name => state.snapshot?.profiles?.find(profile => profile.name === name) || { name, display_name: name, avatar: null };
 const avatarContent = profile => profile.avatar ? `<img src="${profile.avatar}" alt="">` : initials(profile.display_name || profile.name);
 
@@ -53,13 +54,18 @@ function render() {
 function renderEvents(events) {
   const timeline = $("#timeline");
   if (!events.length) { timeline.innerHTML = `<div class="empty"><div><strong>#${escapeHtml(state.channel)} is ready</strong>Start a conversation with your humans and agents.</div></div>`; return; }
-  timeline.innerHTML = events.map(e => { const profile = profileFor(e.actor); return `<article class="event ${e.actor_role}"><div class="event-avatar">${avatarContent(profile)}</div><div><div class="event-head"><b>${escapeHtml(profile.display_name || e.actor)}</b><span class="role">${escapeHtml(e.actor_role)}</span><time>${relative(e.created_at)}</time></div><p class="event-summary">${escapeHtml(e.summary)}</p><div class="kind">${escapeHtml(e.kind)}${e.task_id ? ` · TASK #${e.task_id}` : ""}</div>${e.detail ? `<details class="context-card"><summary>Show action context</summary><pre>${escapeHtml(JSON.stringify(e.detail, null, 2))}</pre></details>` : ""}</div></article>`; }).join("");
+  const byId = new Map(events.map(event => [event.id, event]));
+  timeline.innerHTML = events.map(e => { const profile = profileFor(e.actor), parent = e.parent_id ? byId.get(e.parent_id) : null, parentProfile = parent ? profileFor(parent.actor) : null; return `<article class="event ${e.actor_role}"><div class="event-avatar">${avatarContent(profile)}</div><div>${parent ? `<button class="reply-quote" data-jump="${parent.id}"><b>${escapeHtml(parentProfile.display_name || parent.actor)}</b><span>${escapeHtml(parent.summary)}</span></button>` : ""}<div class="event-head"><b>${escapeHtml(profile.display_name || e.actor)}</b><span class="role">${escapeHtml(e.actor_role)}</span><time>${relative(e.created_at)}</time><button class="reply-action" data-reply="${e.id}" title="Reply">↩ Reply</button></div><p class="event-summary">${escapeHtml(e.summary)}</p><div class="kind">${escapeHtml(e.kind)}${e.task_id ? ` · TASK #${e.task_id}` : ""}</div>${e.detail ? `<details class="context-card"><summary>Show action context</summary><pre>${escapeHtml(JSON.stringify(e.detail, null, 2))}</pre></details>` : ""}</div></article>`; }).join("");
+  document.querySelectorAll("[data-reply]").forEach(button => button.onclick = () => setReply(events.find(event => event.id === Number(button.dataset.reply))));
+  document.querySelectorAll("[data-jump]").forEach(button => button.onclick = () => { const target = document.querySelector(`[data-reply="${button.dataset.jump}"]`)?.closest(".event"); target?.scrollIntoView({ behavior: "smooth", block: "center" }); target?.classList.add("reply-flash"); setTimeout(() => target?.classList.remove("reply-flash"), 1400); });
   requestAnimationFrame(() => timeline.scrollTop = timeline.scrollHeight);
 }
 
+function setReply(event) { state.replyTo = event || null; $("#reply-target").classList.toggle("hidden", !event); if (event) { $("#reply-name").textContent = profileFor(event.actor).display_name || event.actor; $("#reply-summary").textContent = event.summary; $("#message").focus(); } }
+
 function renderTasks(tasks) {
   const active = tasks.filter(t => !["done", "cancelled"].includes(t.status));
-  $("#tasks").innerHTML = active.length ? active.map(t => `<article class="task"><div class="task-top"><b>${escapeHtml(t.title)}</b><i class="priority ${t.priority}"></i></div>${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}<div class="task-meta"><span class="task-status">${escapeHtml(t.status.replace("_", " "))}</span><span>${escapeHtml(t.assignee || "unassigned")} · #${t.id}</span></div></article>`).join("") : `<p class="no-items">No active tasks. Clear runway.</p>`;
+  $("#tasks").innerHTML = active.length ? active.map(t => { const agent = t.assignee ? profileFor(t.assignee) : null; return `<article class="task"><div class="task-top"><b>${escapeHtml(t.title)}</b><i class="priority ${t.priority}"></i></div>${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}${agent ? `<div class="task-agent"><span class="task-agent-avatar">${avatarContent(agent)}</span><div><b>${escapeHtml(agent.display_name || agent.name)}</b><small>${t.started_at ? `Working for ${elapsed(t.started_at)}` : "Assigned · not started"}</small></div></div>` : `<div class="task-agent unassigned-agent"><span>?</span><div><b>Unassigned</b><small>Waiting for an agent</small></div></div>`}<div class="task-meta"><span class="task-status">${escapeHtml(t.status.replace("_", " "))}</span><span>Task #${t.id}</span></div></article>`; }).join("") : `<p class="no-items">No active tasks. Clear runway.</p>`;
 }
 function renderClaims(claims) {
   $("#claim-count").textContent = `${claims.length} active`;
@@ -76,8 +82,9 @@ function connect() {
 }
 
 $("#login-form").onsubmit = async (event) => { event.preventDefault(); $("#login-error").textContent = ""; try { await login($("#token").value); } catch (error) { $("#login-error").textContent = error.message; } };
-$("#composer").onsubmit = async (event) => { event.preventDefault(); const field = $("#message"), summary = field.value.trim(); if (!summary) return; field.value = ""; await api("/api/events", { method: "POST", body: JSON.stringify({ channel: state.channel, summary, kind: "message" }) }); };
+$("#composer").onsubmit = async (event) => { event.preventDefault(); const field = $("#message"), summary = field.value.trim(), parentId = state.replyTo?.id; if (!summary) return; field.value = ""; setReply(null); await api("/api/events", { method: "POST", body: JSON.stringify({ channel: state.channel, summary, kind: "message", parentId }) }); };
 $("#message").onkeydown = event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#composer").requestSubmit(); } };
+$("#cancel-reply").onclick = () => setReply(null);
 $("#refresh").onclick = refresh;
 $("#logout").onclick = () => { localStorage.removeItem("a2ac-token"); location.reload(); };
 async function addProjectSpace() {
@@ -110,4 +117,5 @@ $("#profile-form").onsubmit = async event => { event.preventDefault(); await api
 $("#workspace-settings").onclick = () => $("#workspace-dialog").showModal();
 $("#copy-invite").onclick = async () => { await navigator.clipboard.writeText($("#invite-url").value); $("#copy-invite").textContent = "Copied"; setTimeout(() => $("#copy-invite").textContent = "Copy", 1200); };
 document.querySelectorAll("[data-close]").forEach(button => button.onclick = () => $("#" + button.dataset.close).close());
+setInterval(() => { if (state.snapshot) renderTasks(state.snapshot.tasks); }, 60_000);
 if (state.token) login(state.token).catch(() => localStorage.removeItem("a2ac-token"));

@@ -22,6 +22,7 @@ export class Store {
         id INTEGER PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'open', priority TEXT NOT NULL DEFAULT 'normal',
         assignee TEXT, created_by TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+        started_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE TABLE IF NOT EXISTS claims (
@@ -40,13 +41,21 @@ export class Store {
       CREATE TABLE IF NOT EXISTS delegation_requests (
         id INTEGER PRIMARY KEY, requester TEXT NOT NULL, target_agent TEXT NOT NULL,
         channel TEXT NOT NULL, request TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), claimed_at TEXT, finished_at TEXT
       );
       CREATE INDEX IF NOT EXISTS events_channel_id ON events(channel, id DESC);
       CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, updated_at DESC);
     `);
     const profileColumns = this.db.pragma("table_info(profiles)") as { name: string }[];
     if (!profileColumns.some((column) => column.name === "accept_delegations")) this.db.exec("ALTER TABLE profiles ADD COLUMN accept_delegations INTEGER NOT NULL DEFAULT 0");
+    const taskColumns = this.db.pragma("table_info(tasks)") as { name: string }[];
+    if (!taskColumns.some((column) => column.name === "started_at")) {
+      this.db.exec("ALTER TABLE tasks ADD COLUMN started_at TEXT");
+      this.db.exec("UPDATE tasks SET started_at=updated_at WHERE status IN ('in_progress','blocked')");
+    }
+    const delegationColumns = this.db.pragma("table_info(delegation_requests)") as { name: string }[];
+    if (!delegationColumns.some((column) => column.name === "claimed_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN claimed_at TEXT");
+    if (!delegationColumns.some((column) => column.name === "finished_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN finished_at TEXT");
   }
 
   private parse(row: Record<string, unknown>): Record<string, unknown> {
@@ -100,9 +109,10 @@ export class Store {
     if (patch.expectedVersion !== undefined && patch.expectedVersion !== current.version) throw new Error(`Version conflict: task is at version ${current.version}`);
     const status = patch.status ?? current.status;
     if (!["open", "in_progress", "blocked", "done", "cancelled"].includes(String(status))) throw new Error("Invalid task status");
-    this.db.prepare(`UPDATE tasks SET status=?, assignee=?, description=?, version=version+1,
+    const startedAt = status === "in_progress" && current.status !== "in_progress" ? new Date().toISOString().replace("T", " ").slice(0, 19) : current.started_at;
+    this.db.prepare(`UPDATE tasks SET status=?, assignee=?, description=?, started_at=?, version=version+1,
       updated_at=datetime('now') WHERE id=?`).run(status, patch.assignee === undefined ? current.assignee : patch.assignee,
-        patch.description ?? current.description, id);
+        patch.description ?? current.description, startedAt ?? null, id);
     const value = this.task(id);
     this.event(identity, { kind: "task.updated", summary: `Updated task #${id} to ${status}`, taskId: id, detail: { patch, task: value } });
     this.onChange("task", value);
@@ -193,4 +203,25 @@ export class Store {
   }
 
   delegationsFor(name: string) { return this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id").all(name); }
+
+  claimNextDelegation(targetAgent: string) {
+    const claim = this.db.transaction(() => {
+      const profile = this.profile(targetAgent) as { accept_delegations: number } | undefined;
+      if (!profile?.accept_delegations) return null;
+      this.db.prepare("UPDATE delegation_requests SET status='pending',claimed_at=NULL WHERE target_agent=? AND status='running' AND claimed_at < datetime('now','-2 hours')").run(targetAgent);
+      const next = this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id LIMIT 1").get(targetAgent) as { id: number } | undefined;
+      if (!next) return null;
+      this.db.prepare("UPDATE delegation_requests SET status='running',claimed_at=datetime('now') WHERE id=? AND status='pending'").run(next.id);
+      return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(next.id);
+    });
+    return claim();
+  }
+
+  finishDelegation(identity: Identity, id: number, status: "completed" | "failed", result: string) {
+    const current = this.db.prepare("SELECT * FROM delegation_requests WHERE id=? AND target_agent=?").get(id, identity.name) as { channel: string } | undefined;
+    if (!current) throw new Error("Delegation request not found");
+    this.db.prepare("UPDATE delegation_requests SET status=?,finished_at=datetime('now'), request=request || char(10) || char(10) || 'Runner result: ' || ? WHERE id=?")
+      .run(status, result.slice(0, 4000), id);
+    return this.event(identity, { channel: current.channel, kind: `delegation.${status}`, summary: `Delegated task #${id} ${status}`, detail: { delegationId: id, result } });
+  }
 }

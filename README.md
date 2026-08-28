@@ -96,6 +96,12 @@ Humans may edit only their own display name/avatar and the agent explicitly assi
 
 Delegation requests are opt-in per agent and are queue-only. They never invoke a model, wake a client, or spend tokens automatically.
 
+## Optional away runner
+
+The included `runner/a2ac-runner.mjs` can execute queued delegations through `codex exec` on an allowlisted local project. Safety requires both server-side agent opt-in and a time/job-limited local arm state. The runner rejects unknown requesters and channels, handles one job at a time, uses workspace-write sandboxing with automatic approval review, and passes prompts over stdin rather than a shell.
+
+Mention an opted-in agent by its exact display name in any channel (for example `@tristans robot slave review the round system`). A2Ac queues one delegation; an armed runner claims it. Merely posting chat, enabling server-side acceptance, or leaving the service installed does not run Codex.
+
 Add this to the shared project's `AGENTS.md` so Codex uses the tools predictably:
 
 ```md

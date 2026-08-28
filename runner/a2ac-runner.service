@@ -1,0 +1,12 @@
+[Unit]
+Description=A2Ac opt-in Codex delegation runner
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node %h/.local/share/a2ac-runner/a2ac-runner.mjs daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
