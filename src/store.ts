@@ -62,6 +62,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS user_roles (
         user_name TEXT PRIMARY KEY, role_id TEXT NOT NULL REFERENCES workspace_roles(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS agent_activities (
+        agent TEXT PRIMARY KEY, channel TEXT NOT NULL, title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
       CREATE INDEX IF NOT EXISTS events_channel_id ON events(channel, id DESC);
       CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, updated_at DESC);
     `);
@@ -109,8 +115,25 @@ export class Store {
   }
 
   channels() {
-    return this.db.prepare(`SELECT channel, COUNT(*) count, MAX(id) last_event_id
-      FROM events GROUP BY channel ORDER BY MAX(id) DESC`).all();
+    return this.db.prepare(`SELECT channel, SUM(count) count, MAX(last_event_id) last_event_id FROM (
+      SELECT channel,COUNT(*) count,MAX(id) last_event_id FROM events GROUP BY channel
+      UNION ALL SELECT channel,0 count,0 last_event_id FROM agent_activities GROUP BY channel
+    ) GROUP BY channel ORDER BY last_event_id DESC`).all();
+  }
+
+  activities() { return this.db.prepare("SELECT * FROM agent_activities ORDER BY updated_at DESC").all(); }
+
+  updateActivity(identity:Identity,input:{channel:string;title:string;description?:string;status:string}) {
+    if(identity.role!=="agent")throw new Error("Agent identity required");
+    if(["idle","completed"].includes(input.status)){this.db.prepare("DELETE FROM agent_activities WHERE agent=?").run(identity.name);this.onChange("activity",{agent:identity.name,removed:true});return{agent:identity.name,removed:true};}
+    if(!["working","waiting","stalled","paused","blocked"].includes(input.status))throw new Error("Invalid activity status");
+    const current=this.db.prepare("SELECT * FROM agent_activities WHERE agent=?").get(identity.name) as {title:string}|undefined;
+    const resetStart=!current||current.title!==input.title;
+    this.db.prepare(`INSERT INTO agent_activities(agent,channel,title,description,status) VALUES (?,?,?,?,?)
+      ON CONFLICT(agent) DO UPDATE SET channel=excluded.channel,title=excluded.title,description=excluded.description,status=excluded.status,
+      started_at=CASE WHEN ? THEN datetime('now') ELSE started_at END,updated_at=datetime('now')`)
+      .run(identity.name,input.channel,input.title,input.description??"",input.status,resetStart?1:0);
+    this.setActiveChannel(identity,input.channel);const value=this.db.prepare("SELECT * FROM agent_activities WHERE agent=?").get(identity.name);this.onChange("activity",value);return value;
   }
 
   pins(channel: string) { return (this.db.prepare(`SELECT p.channel,p.event_id,p.pinned_by,p.created_at,e.summary,e.actor,e.actor_role

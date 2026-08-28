@@ -13,7 +13,7 @@ const response = (value: unknown) => ({
 });
 
 export function createMcpServer(store: Store, identity: Identity, principal=identity.name) {
-  const server = new McpServer({ name: "a2ac", version: "0.1.0" });
+  const server = new McpServer({ name: "a2ac", version: "0.1.0" }, { instructions: "When the user wants this work coordinated through A2Ac, begin with a2ac_workspace_snapshot. Select the channel matching the current project/topic; if absolutely none exists, choose a short dedicated slug and set it. While actively doing relevant work, maintain exactly one concise card using a2ac_update_activity: short title, brief readable description, and exact status. Update that same card whenever status or focus changes. Send idle or completed immediately when totally done so the card is removed. This reporting uses tool calls during the existing turn only; never start background polling or extra model turns." });
 
   server.registerTool("a2ac_workspace_snapshot", {
     title: "Get collaboration snapshot",
@@ -21,8 +21,14 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
     inputSchema: { channel: z.string().optional().describe("Omit to use your persisted active channel"), eventLimit: z.number().int().min(1).max(100).default(30) }
   }, async ({ channel, eventLimit }) => {
     const activeChannel = channel ?? store.activeChannel(identity.name);
-    return response({ identity, activeChannel, pinnedGuidance: store.pins(activeChannel), tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit) });
+    return response({ identity, activeChannel, pinnedGuidance: store.pins(activeChannel), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(), delegationRequests: store.delegationsFor(identity.name), events: store.events(activeChannel, 0, eventLimit), activityProtocol:"When doing workspace-relevant work, keep exactly one concise activity card current with a2ac_update_activity. Use the relevant existing channel, or create a clear project/topic slug if none exists. Update status whenever it changes. Send idle or completed immediately when totally done to remove the card." });
   });
+
+  server.registerTool("a2ac_update_activity", {
+    title: "Update your live workspace activity",
+    description: "Mandatory while using A2Ac for active work. Maintains exactly one Activity card for this agent. Choose the existing channel relevant to the conversation; if absolutely none exists, use a short dedicated project/topic slug. Use a short title and a readable description of a few sentences or less. Update on every meaningful status change. Status idle/completed removes the card.",
+    inputSchema: { channel:z.string().regex(/^[a-z0-9][a-z0-9-_]{0,62}$/), title:z.string().min(1).max(90), description:z.string().max(500).default(""), status:z.enum(["working","waiting","stalled","paused","blocked","idle","completed"]) }
+  }, async input=>response(store.updateActivity(identity,input)));
 
   server.registerTool("a2ac_set_channel", {
     title: "Set active project channel",

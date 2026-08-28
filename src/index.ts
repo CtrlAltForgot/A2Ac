@@ -42,7 +42,7 @@ app.get("/api/me", (req, res) => {
 });
 app.get("/api/snapshot", (req, res) => res.json({
   me: { ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) },
-  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(),
+  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), activities: store.activities(), claims: store.claims(), presence: store.presence(),
   workspace: store.workspace(), pins: store.pins(String(req.query.channel ?? "general")), events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
 }));
 app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot pin guidance"});try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});

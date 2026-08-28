@@ -67,7 +67,7 @@ function render() {
   $("#online-count").textContent = s.presence.length;
   $("#presence").innerHTML = s.presence.map(p => { const editable = s.me.editableProfiles.includes(p.name), activity = p.current_task ? "working" : p.status; return `<button class="person ${editable ? "editable" : ""}" data-profile-name="${escapeHtml(p.name)}" ${editable ? `data-profile="${escapeHtml(p.name)}"` : "disabled"}><div class="person-avatar">${avatarContent(p)}<i></i></div><div><b>${escapeHtml(p.display_name || p.name)}</b><small>${escapeHtml(activity)} · #${escapeHtml(p.active_channel || "general")}</small></div></button>`; }).join("");
   document.querySelectorAll("[data-profile]").forEach(el => el.onclick = () => openProfile(el.dataset.profile));
-  renderEvents(s.events); renderTasks(s.tasks, s.presence); renderPins(s.pins||[]); renderClaims(s.claims);
+  renderEvents(s.events); renderActivities(s.activities||[]); renderPins(s.pins||[]); renderClaims(s.claims);
 }
 
 function renderEvents(events) {
@@ -86,11 +86,9 @@ function renderEvents(events) {
 
 function setReply(event) { state.replyTo = event || null; $("#reply-target").classList.toggle("hidden", !event); if (event) { $("#reply-name").textContent = profileFor(event.actor).display_name || event.actor; $("#reply-summary").textContent = event.summary; $("#message").focus(); } }
 
-function renderTasks(tasks, presence=[]) {
-  const active = tasks.filter(t => !["done", "cancelled"].includes(t.status));
-  const personal = presence.filter(p=>p.role==="agent"&&p.current_task&&!['completed','offline'].includes(p.status)).map(p=>({title:p.current_task,status:p.status,assignee:p.name,started_at:p.last_seen,personal:true}));
-  const goals=[...active,...personal];
-  $("#tasks").innerHTML = goals.length ? goals.map(t => { const agent = t.assignee ? profileFor(t.assignee) : null, statusLabel=String(t.status).replace("_"," "), timing=t.started_at?(t.status==="in_progress"?`Working for ${elapsed(t.started_at)}`:`${statusLabel} · updated ${elapsed(t.started_at)} ago`):"Assigned · not started"; return `<article class="task"><div class="task-top"><b>${escapeHtml(t.title)}</b><i class="priority ${t.priority||"normal"}"></i></div>${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}${agent ? `<div class="task-agent"><span class="task-agent-avatar">${avatarContent(agent)}</span><div><b>${escapeHtml(agent.display_name || agent.name)}</b><small class="status-${escapeHtml(t.status)}">${escapeHtml(timing)}</small></div></div>` : `<div class="task-agent unassigned-agent"><span>?</span><div><b>Unassigned</b><small>Waiting for an agent</small></div></div>`}<div class="task-meta"><span class="task-status status-${escapeHtml(t.status)}">${escapeHtml(statusLabel)}</span><span>${t.personal?"Agent goal":`Shared #${t.id}`}</span></div></article>`; }).join("") : `<p class="no-items">No active goals. Clear runway.</p>`;
+function renderActivities(activities) {
+  $("#activity-count").textContent=`${activities.length} active`;
+  $("#tasks").innerHTML=activities.length?activities.map(activity=>{const agent=profileFor(activity.agent),status=String(activity.status).replace("_"," "),timing=activity.status==="working"?`Working for ${elapsed(activity.started_at)}`:`${status} · updated ${elapsed(activity.updated_at)} ago`;return `<article class="task activity-card"><div class="task-top"><b>${escapeHtml(activity.title)}</b><i class="activity-dot status-${escapeHtml(activity.status)}"></i></div>${activity.description?`<p>${escapeHtml(activity.description)}</p>`:""}<div class="task-agent"><span class="task-agent-avatar">${avatarContent(agent)}</span><div><b>${escapeHtml(agent.display_name||agent.name)}</b><small class="status-${escapeHtml(activity.status)}">${escapeHtml(timing)}</small></div></div><div class="task-meta"><span class="task-status status-${escapeHtml(activity.status)}">${escapeHtml(status)}</span><span>#${escapeHtml(activity.channel)}</span></div></article>`;}).join(""):`<p class="no-items">No agents are actively working.</p>`;
 }
 function renderPins(pins){$("#pin-count").textContent=`${pins.length} pinned`;$("#pins").innerHTML=pins.length?pins.map(pin=>`<article class="pin"><b>${escapeHtml(pin.summary)}</b><small>${escapeHtml(profileFor(pin.actor).display_name||pin.actor)} · project instruction</small><button data-unpin="${pin.event_id}" title="Unpin">×</button></article>`).join(""):`<p class="no-items">No project guidance pinned.</p>`;document.querySelectorAll("[data-unpin]").forEach(button=>button.onclick=async()=>{await api(`/api/channels/${encodeURIComponent(state.channel)}/pins/${button.dataset.unpin}`,{method:"DELETE"});await refresh();});}
 function renderClaims(claims) {
@@ -150,7 +148,7 @@ async function addProjectSpace() {
 $("#add-channel").onclick = addProjectSpace;
 $("#add-project-space").onclick = addProjectSpace;
 $("#close-context").onclick = () => $("#context-panel").classList.remove("open");
-$("#new-task").onclick = () => $("#task-dialog").showModal();
+$("#new-task")?.addEventListener("click",()=>$("#task-dialog").showModal());
 $("#task-form").onsubmit = async event => { if (event.submitter?.value === "cancel") return; event.preventDefault(); await api("/api/tasks", { method: "POST", body: JSON.stringify({ title: $("#task-title").value, description: $("#task-description").value, priority: $("#task-priority").value }) }); $("#task-form").reset(); $("#task-dialog").close(); };
 
 let pendingAvatar;
@@ -178,5 +176,5 @@ $("#remove-workspace-icon").onclick=()=>{pendingWorkspaceIcon=null;$("#workspace
 $("#workspace-form").onsubmit=async event=>{event.preventDefault();await api("/api/workspace",{method:"PATCH",body:JSON.stringify({name:$("#workspace-name-input").value,icon:pendingWorkspaceIcon})});$("#workspace-dialog").close();await refresh();};
 $("#copy-invite").onclick = async () => { await navigator.clipboard.writeText($("#invite-url").value); $("#copy-invite").textContent = "Copied"; setTimeout(() => $("#copy-invite").textContent = "Copy", 1200); };
 document.querySelectorAll("[data-close]").forEach(button => button.onclick = () => $("#" + button.dataset.close).close());
-setInterval(() => { if (state.snapshot) renderTasks(state.snapshot.tasks,state.snapshot.presence); }, 60_000);
+setInterval(() => { if (state.snapshot) renderActivities(state.snapshot.activities||[]); }, 60_000);
 if (state.token) login(state.token).catch(() => localStorage.removeItem("a2ac-token"));
