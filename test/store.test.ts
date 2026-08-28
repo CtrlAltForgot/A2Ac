@@ -59,3 +59,10 @@ test("delegations require explicit target opt-in and never execute work", () => 
   store.finishDelegation(alice, claimed.id, "completed", "Reviewed successfully");
   assert.equal(store.delegationsFor(alice.name).length, 0);
 });
+
+test("initial event reads return the newest bounded channel context", () => {
+  const store = setup();
+  for (let index = 1; index <= 5; index++) store.event(alice, { channel: "project", kind: "message", summary: `message ${index}` });
+  const recent = store.events("project", 0, 2) as { summary: string }[];
+  assert.deepEqual(recent.map((event) => event.summary), ["message 4", "message 5"]);
+});

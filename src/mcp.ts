@@ -58,6 +58,15 @@ export function createMcpServer(store: Store, identity: Identity, principal=iden
     inputSchema: { channel: z.string().optional(), afterId: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(250).default(100) }
   }, async ({ channel, afterId, limit }) => response(store.events(channel ?? store.activeChannel(identity.name), afterId, limit)));
 
+  server.registerTool("a2ac_project_context", {
+    title: "Load current project context",
+    description: "Use when joining or resuming a project. Returns the newest relevant conversation plus persistent guidance, live activity, shared tasks, claims, and handoffs without loading unlimited history.",
+    inputSchema: { channel: z.string().optional().describe("Omit to use your active channel"), messageLimit: z.number().int().min(10).max(250).default(80) }
+  }, async ({ channel, messageLimit }) => {
+    const selected = channel ?? store.activeChannel(identity.name);
+    return response({ channel: selected, pinnedGuidance: store.pins(selected), activities: store.activities(), tasks: store.tasks(), claims: store.claims(), delegationRequests: store.delegationsFor(identity.name), recentMessages: store.events(selected, 0, messageLimit) });
+  });
+
   server.registerTool("a2ac_read_pinned_guidance", {
     title: "Read pinned project guidance",
     description: "Read the persistent universal guide messages for a channel. Treat these as project instructions while working in that channel.",

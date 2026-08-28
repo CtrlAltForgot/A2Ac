@@ -176,5 +176,5 @@ $("#remove-workspace-icon").onclick=()=>{pendingWorkspaceIcon=null;$("#workspace
 $("#workspace-form").onsubmit=async event=>{event.preventDefault();await api("/api/workspace",{method:"PATCH",body:JSON.stringify({name:$("#workspace-name-input").value,icon:pendingWorkspaceIcon})});$("#workspace-dialog").close();await refresh();};
 $("#copy-invite").onclick = async () => { await navigator.clipboard.writeText($("#invite-url").value); $("#copy-invite").textContent = "Copied"; setTimeout(() => $("#copy-invite").textContent = "Copy", 1200); };
 document.querySelectorAll("[data-close]").forEach(button => button.onclick = () => $("#" + button.dataset.close).close());
-setInterval(() => { if (state.snapshot) renderActivities(state.snapshot.activities||[]); }, 60_000);
+setInterval(() => { if (state.snapshot && !document.hidden) refresh().catch(console.error); }, 30_000);
 if (state.token) login(state.token).catch(() => localStorage.removeItem("a2ac-token"));

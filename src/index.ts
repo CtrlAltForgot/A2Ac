@@ -23,6 +23,17 @@ const upload = multer({ storage: multer.diskStorage({ destination: store.uploads
 const app = express();
 const httpServer = createServer(app);
 const sockets = new WebSocketServer({ noServer: true });
+const liveHumanNames = () => new Set([...sockets.clients]
+  .map((client) => (client as WebSocket & { identity?: { name: string; role: string } }).identity)
+  .filter((identity) => identity?.role !== "agent")
+  .map((identity) => identity!.name));
+const visiblePresence = (viewer?: { name: string; role: string }) => {
+  const humans = liveHumanNames();
+  if (viewer && viewer.role !== "agent") humans.add(viewer.name);
+  const agentCutoff = Date.now() - 120_000;
+  return (store.presence() as { name: string; role: string; last_seen: string }[]).filter((person) =>
+    person.role === "agent" ? new Date(`${person.last_seen}Z`).getTime() >= agentCutoff : humans.has(person.name));
+};
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
@@ -42,7 +53,7 @@ app.get("/api/me", (req, res) => {
 });
 app.get("/api/snapshot", (req, res) => res.json({
   me: { ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) },
-  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), activities: store.activities(), claims: store.claims(), presence: store.presence(),
+  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), activities: store.activities(), claims: store.claims(), presence: visiblePresence(req.identity!),
   workspace: store.workspace(), pins: store.pins(String(req.query.channel ?? "general")), events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
 }));
 app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot pin guidance"});try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});
@@ -114,7 +125,7 @@ app.patch("/api/tasks/:id", (req, res) => {
 });
 
 app.all("/mcp", requireAuth, async (req, res) => {
-  try { await handleMcp(req, res, store, principalFor(req.identity!)); }
+  try { store.touch(req.identity!, "online"); await handleMcp(req, res, store, principalFor(req.identity!)); }
   catch (error) {
     console.error(error);
     if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
@@ -137,7 +148,13 @@ httpServer.on("upgrade", (req, socket, head) => {
   });
 });
 
-sockets.on("connection", (socket) => socket.send(JSON.stringify({ type: "connected" })));
+sockets.on("connection", (socket) => {
+  socket.send(JSON.stringify({ type: "connected" }));
+  socket.on("close", () => {
+    const payload = JSON.stringify({ type: "presence.changed" });
+    for (const client of sockets.clients) if (client.readyState === WebSocket.OPEN) client.send(payload);
+  });
+});
 store.onChange = (type, value) => {
   const payload = JSON.stringify({ type, value });
   for (const client of sockets.clients) if (client.readyState === WebSocket.OPEN) client.send(payload);

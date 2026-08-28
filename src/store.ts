@@ -110,8 +110,11 @@ export class Store {
   }
 
   events(channel = "general", after = 0, limit = 100) {
-    return (this.db.prepare("SELECT * FROM events WHERE channel = ? AND id > ? ORDER BY id ASC LIMIT ?")
-      .all(channel, after, Math.min(limit, 250)) as Record<string, unknown>[]).map((row) => this.parse(row));
+    const capped = Math.min(limit, 250);
+    const rows = after > 0
+      ? this.db.prepare("SELECT * FROM events WHERE channel = ? AND id > ? ORDER BY id ASC LIMIT ?").all(channel, after, capped)
+      : this.db.prepare("SELECT * FROM (SELECT * FROM events WHERE channel = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC").all(channel, capped);
+    return (rows as Record<string, unknown>[]).map((row) => this.parse(row));
   }
 
   channels() {
