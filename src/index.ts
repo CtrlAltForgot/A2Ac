@@ -1,6 +1,8 @@
 import express from "express";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import multer from "multer";
 import { WebSocketServer, WebSocket } from "ws";
 import { authMiddleware, identifyKey, loadCredentials } from "./auth.js";
 import { handleMcp } from "./mcp.js";
@@ -16,6 +18,8 @@ for (const entry of (process.env.A2AC_AGENT_OWNERS ?? "owner-agent:owner,buddy-a
   if (agent && owner) agentOwners.set(agent, owner);
 }
 const store = new Store(dataDir);
+const maxUploadMb = Math.max(1, Math.min(Number(process.env.A2AC_MAX_UPLOAD_MB ?? 100), 500));
+const upload = multer({ storage: multer.diskStorage({ destination: store.uploadsDir, filename: (_req, _file, callback) => callback(null, randomUUID()) }), limits: { fileSize: maxUploadMb * 1024 * 1024, files: 1 } });
 const app = express();
 const httpServer = createServer(app);
 const sockets = new WebSocketServer({ noServer: true });
@@ -37,8 +41,15 @@ app.get("/api/me", (req, res) => {
 app.get("/api/snapshot", (req, res) => res.json({
   me: { ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) },
   channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(), claims: store.claims(), presence: store.presence(),
-  events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
+  workspace: store.workspace(), events: store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
 }));
+app.patch("/api/workspace", (req,res)=>{
+  if(req.identity!.role!=="admin"&&req.identity!.name!=="owner")return res.status(403).json({error:"Only the workspace owner can change branding"});
+  const {name,icon}=req.body??{};
+  if(typeof name!=="string"||!name.trim()||name.trim().length>50)return res.status(400).json({error:"Workspace name must be 1-50 characters"});
+  if(icon!==undefined&&icon!==null&&(typeof icon!=="string"||icon.length>350000||!/^data:image\/(png|jpeg|webp|gif);base64,/.test(icon)))return res.status(400).json({error:"Workspace icon must be an image under 250 KB"});
+  res.json(store.updateWorkspace({name:name.trim(),icon}));
+});
 app.patch("/api/profiles/:name", (req, res) => {
   const target = String(req.params.name);
   if (!editableProfiles(req.identity!).includes(target)) return res.status(403).json({ error: "You can only edit yourself and your assigned agent" });
@@ -47,6 +58,18 @@ app.patch("/api/profiles/:name", (req, res) => {
   if (displayName !== undefined && (typeof displayName !== "string" || !displayName.trim() || displayName.trim().length > 40)) return res.status(400).json({ error: "Display name must be 1-40 characters" });
   if (avatar !== undefined && avatar !== null && (typeof avatar !== "string" || avatar.length > 350_000 || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatar))) return res.status(400).json({ error: "Avatar must be a PNG, JPEG, WebP, or GIF under 250 KB" });
   res.json(store.updateProfile(target, { displayName: displayName?.trim(), avatar, acceptDelegations: req.body?.acceptDelegations }));
+});
+app.post("/api/attachments", upload.single("file"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "file is required" });
+  const id = randomUUID();
+  const saved=store.createAttachment(req.identity!, { id, filename: req.file.originalname.slice(0, 240), mimeType: req.file.mimetype || "application/octet-stream", size: req.file.size, storedName: req.file.filename }) as Record<string,unknown>;
+  const {stored_name,...visible}=saved; res.status(201).json(visible);
+});
+app.get("/api/attachments/:id", (req, res) => {
+  const attachment = store.attachment(String(req.params.id)) as { filename: string; mime_type: string; stored_name: string } | undefined;
+  if (!attachment) return res.status(404).json({ error: "Attachment not found" });
+  res.type(attachment.mime_type); res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
+  res.sendFile(resolve(store.uploadsDir, attachment.stored_name));
 });
 app.get("/api/events", (req, res) => res.json(store.events(String(req.query.channel ?? "general"), Number(req.query.after ?? 0), Number(req.query.limit ?? 100))));
 app.post("/api/events", (req, res) => {
@@ -87,6 +110,10 @@ app.all("/mcp", requireAuth, async (req, res) => {
     console.error(error);
     if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
   }
+});
+app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if(error instanceof multer.MulterError)return res.status(413).json({error:error.code==="LIMIT_FILE_SIZE"?`File exceeds ${maxUploadMb} MB limit`:error.message});
+  next(error);
 });
 
 httpServer.on("upgrade", (req, socket, head) => {

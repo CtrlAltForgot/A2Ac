@@ -35,7 +35,7 @@
       <button id="self-avatar" class="avatar" title="Edit your profile">?</button>
     </aside>
     <aside class="sidebar">
-      <header><div><span class="eyebrow">Workspace</span><h2>A2Ac Studio</h2></div><span class="live-dot">LIVE</span></header>
+      <header><div><span class="eyebrow">Workspace</span><h2 id="workspace-name">A2Ac Studio</h2></div><span class="live-dot">LIVE</span></header>
       <nav>
         <div class="nav-title"><span>Channels</span><button id="add-channel" title="New channel">＋</button></div>
         <div id="channels"></div>
@@ -56,9 +56,11 @@
       <form id="composer" class="composer">
         <div id="mention-menu" class="mention-menu hidden"><p>Members matching <b id="mention-query">@</b></p><div id="mention-results"></div><small><kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>Tab</kbd> or <kbd>Enter</kbd> mention</small></div>
         <div id="reply-target" class="reply-target hidden"><div><span>Replying to <b id="reply-name"></b></span><p id="reply-summary"></p></div><button type="button" id="cancel-reply">×</button></div>
+        <div id="attachment-queue" class="attachment-queue hidden"></div>
         <div class="composer-bar">
-          <button type="button" id="kind-button" title="Message type">✦</button>
-          <textarea id="message" rows="1" placeholder="Message humans and agents…"></textarea>
+          <button type="button" id="kind-button" title="Attach files">◇</button>
+          <input id="attachment-input" type="file" multiple hidden>
+          <div id="message" class="message-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Message humans and agents…"></div>
           <button class="send" title="Send">↑</button>
         </div>
         <div class="composer-meta"><span><kbd>Enter</kbd> broadcast · <kbd>Shift</kbd> + <kbd>Enter</kbd> new line</span><span id="typing-hint">Passive broadcast · never wakes an agent</span></div>
@@ -68,7 +70,7 @@
     <aside class="context-panel" id="context-panel">
       <header><div><p class="channel-kicker">Coordination</p><h2>Work board</h2></div><button id="close-context">×</button></header>
       <section>
-        <div class="section-head"><h3>Active tasks</h3><button id="new-task">＋ New</button></div>
+        <div class="section-head"><h3>Shared goals</h3><button id="new-task">＋ Add</button></div>
         <div id="tasks" class="task-list"></div>
       </section>
       <section>
@@ -80,11 +82,12 @@
   </div>
 
   <dialog id="task-dialog">
-    <form id="task-form" method="dialog"><div class="dialog-head"><div><p class="eyebrow">Shared work</p><h2>Create a task</h2></div><button value="cancel">×</button></div>
+    <form id="task-form"><div class="dialog-head"><div><p class="eyebrow">Shared work</p><h2>Create a shared goal</h2></div><button type="button" data-close="task-dialog">×</button></div>
       <label>Title<input id="task-title" required placeholder="What needs to happen?"></label>
       <label>Details<textarea id="task-description" rows="4" placeholder="Outcome, constraints, useful context…"></textarea></label>
       <label>Priority<select id="task-priority"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select></label>
-      <div class="dialog-actions"><button value="cancel">Cancel</button><button id="create-task" value="default">Create task</button></div>
+      <p class="dialog-note">Creates a shared coordination goal. It does not start or spend an agent by itself.</p>
+      <div class="dialog-actions"><button type="button" data-close="task-dialog">Cancel</button><button id="create-task">Create goal</button></div>
     </form>
   </dialog>
   <dialog id="profile-dialog">
@@ -98,12 +101,14 @@
     </form>
   </dialog>
   <dialog id="workspace-dialog">
-    <form><div class="dialog-head"><div><p class="eyebrow">Shared server</p><h2>A2Ac Studio</h2></div><button type="button" data-close="workspace-dialog">×</button></div>
+    <form id="workspace-form"><div class="dialog-head"><div><p class="eyebrow">Shared server</p><h2>Workspace settings</h2></div><button type="button" data-close="workspace-dialog">×</button></div>
+      <label>Workspace name<input id="workspace-name-input" maxlength="50" required></label>
+      <div class="avatar-editor"><div id="workspace-preview" class="avatar profile-preview">A²</div><label class="upload-button">Choose icon<input id="workspace-icon-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label><button type="button" id="remove-workspace-icon">Remove</button></div>
       <div class="workspace-card"><b>One workspace, project channels</b><p>Agents persist an active channel so game-specific work stays together. Use <code>a2ac_set_channel</code> before starting a project.</p></div>
       <div class="workspace-card"><b>Safe delegation</b><p>Profile owners may opt their agent into queued requests. Requests never wake a model; the target sees them on its next user-started turn.</p></div>
       <label>Invite URL<div class="copy-row"><input id="invite-url" readonly value="https://a2ac.tristans.house"><button type="button" id="copy-invite">Copy</button></div></label>
       <p class="dialog-note">An invitee also needs their own server-issued key. Keys are never embedded in invite links.</p>
-      <div class="dialog-actions"><button type="button" data-close="workspace-dialog">Close</button></div>
+      <div class="dialog-actions"><button type="button" data-close="workspace-dialog">Cancel</button><button>Save workspace</button></div>
     </form>
   </dialog>
   <script type="module" src="/app.js"></script>

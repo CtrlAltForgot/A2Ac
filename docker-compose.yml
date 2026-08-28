@@ -11,5 +11,6 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3210}
       A2AC_IDENTITIES: ${A2AC_IDENTITIES:-owner:change-me:human}
       A2AC_AGENT_OWNERS: ${A2AC_AGENT_OWNERS:-owner-agent:owner,buddy-agent:buddy}
+      A2AC_MAX_UPLOAD_MB: ${A2AC_MAX_UPLOAD_MB:-100}
     volumes:
       - ./data:/data

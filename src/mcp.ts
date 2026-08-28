@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Request, Response } from "express";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
 import type { Store } from "./store.js";
 import type { Identity } from "./types.js";
@@ -50,6 +52,21 @@ export function createMcpServer(store: Store, identity: Identity) {
     inputSchema: { channel: z.string().optional(), afterId: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(250).default(100) }
   }, async ({ channel, afterId, limit }) => response(store.events(channel ?? store.activeChannel(identity.name), afterId, limit)));
 
+  server.registerTool("a2ac_read_attachment", {
+    title: "Read a shared attachment",
+    description: "Read an attachment referenced by a message. Images and small text files are returned in context. Large/binary files return metadata so they do not waste model tokens.",
+    inputSchema: { attachmentId: z.string().uuid() }
+  }, async ({ attachmentId }) => {
+    const item=store.attachment(attachmentId) as {filename:string;mime_type:string;size:number;stored_name:string}|undefined;
+    if(!item)return response({error:"Attachment not found"});
+    const metadata={id:attachmentId,filename:item.filename,mimeType:item.mime_type,size:item.size};
+    if(item.size>10*1024*1024)return response({...metadata,note:"File is over 10 MB and was not injected into model context. Download it from the authenticated A2Ac attachment endpoint when local inspection is needed."});
+    const data=await readFile(join(store.uploadsDir,item.stored_name));
+    if(item.mime_type.startsWith("image/"))return {content:[{type:"text" as const,text:JSON.stringify(metadata)},{type:"image" as const,data:data.toString("base64"),mimeType:item.mime_type}]};
+    if(item.mime_type.startsWith("text/")||/\.(md|json|lua|luau|js|ts|txt|csv)$/i.test(item.filename))return response({...metadata,text:data.toString("utf8")});
+    return response({...metadata,note:"Binary attachment is available but was not injected into model context."});
+  });
+
   server.registerTool("a2ac_report_action", {
     title: "Report agent action",
     description: "Publish a concise action summary with expandable structured context such as files, commands, tool calls, test output, or commit SHA.",
@@ -71,7 +88,7 @@ export function createMcpServer(store: Store, identity: Identity) {
     title: "Update shared task",
     description: "Claim, progress, block, or finish a task. Pass expectedVersion from the task to prevent overwriting another agent's update.",
     inputSchema: {
-      taskId: z.number().int(), status: z.enum(["open", "in_progress", "blocked", "done", "cancelled"]).optional(),
+      taskId: z.number().int(), status: z.enum(["open", "in_progress", "waiting", "stalled", "paused", "blocked", "done", "cancelled"]).optional(),
       assignee: z.string().nullable().optional(), description: z.string().optional(), expectedVersion: z.number().int().optional()
     }
   }, async ({ taskId, ...patch }) => response(store.updateTask(identity, taskId, patch)));

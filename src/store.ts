@@ -5,10 +5,13 @@ import type { EventInput, Identity } from "./types.js";
 
 export class Store {
   readonly db: Database.Database;
+  readonly uploadsDir: string;
   onChange: (type: string, value: unknown) => void = () => {};
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
+    this.uploadsDir = join(dataDir, "uploads");
+    mkdirSync(this.uploadsDir, { recursive: true });
     this.db = new Database(join(dataDir, "a2ac.db"));
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
@@ -43,6 +46,12 @@ export class Store {
         channel TEXT NOT NULL, request TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL DEFAULT (datetime('now')), claimed_at TEXT, finished_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime_type TEXT NOT NULL,
+        size INTEGER NOT NULL, uploader TEXT NOT NULL, stored_name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_channel_id ON events(channel, id DESC);
       CREATE INDEX IF NOT EXISTS tasks_status ON tasks(status, updated_at DESC);
     `);
@@ -108,8 +117,8 @@ export class Store {
     if (!current) throw new Error("Task not found");
     if (patch.expectedVersion !== undefined && patch.expectedVersion !== current.version) throw new Error(`Version conflict: task is at version ${current.version}`);
     const status = patch.status ?? current.status;
-    if (!["open", "in_progress", "blocked", "done", "cancelled"].includes(String(status))) throw new Error("Invalid task status");
-    const startedAt = status === "in_progress" && current.status !== "in_progress" ? new Date().toISOString().replace("T", " ").slice(0, 19) : current.started_at;
+    if (!["open", "in_progress", "waiting", "stalled", "paused", "blocked", "done", "cancelled"].includes(String(status))) throw new Error("Invalid task status");
+    const startedAt = status === "in_progress" && !current.started_at ? new Date().toISOString().replace("T", " ").slice(0, 19) : current.started_at;
     this.db.prepare(`UPDATE tasks SET status=?, assignee=?, description=?, started_at=?, version=version+1,
       updated_at=datetime('now') WHERE id=?`).run(status, patch.assignee === undefined ? current.assignee : patch.assignee,
         patch.description ?? current.description, startedAt ?? null, id);
@@ -166,6 +175,18 @@ export class Store {
   profile(name: string) { return this.db.prepare("SELECT * FROM profiles WHERE name=?").get(name); }
 
   profiles() { return this.db.prepare("SELECT * FROM profiles ORDER BY display_name").all(); }
+
+  workspace() {
+    const rows = this.db.prepare("SELECT key,value FROM settings WHERE key IN ('workspace_name','workspace_icon')").all() as {key:string;value:string}[];
+    const values=Object.fromEntries(rows.map(row=>[row.key,row.value]));
+    return { name: values.workspace_name || "A2Ac Studio", icon: values.workspace_icon || null };
+  }
+
+  updateWorkspace(input: {name?:string;icon?:string|null}) {
+    if(input.name!==undefined)this.db.prepare("INSERT INTO settings(key,value) VALUES ('workspace_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(input.name);
+    if(input.icon!==undefined){ if(input.icon===null)this.db.prepare("DELETE FROM settings WHERE key='workspace_icon'").run(); else this.db.prepare("INSERT INTO settings(key,value) VALUES ('workspace_icon',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(input.icon); }
+    const value=this.workspace();this.onChange("workspace",value);return value;
+  }
 
   updateProfile(name: string, patch: { displayName?: string; avatar?: string | null; acceptDelegations?: boolean }) {
     this.ensureProfile(name);
@@ -225,4 +246,12 @@ export class Store {
       .run(status, result.slice(0, 4000), id);
     return this.event(identity, { channel: current.channel, kind: `delegation.${status}`, summary: `Delegated task #${id} ${status}`, detail: { delegationId: id, result } });
   }
+
+  createAttachment(identity: Identity, input: { id: string; filename: string; mimeType: string; size: number; storedName: string }) {
+    this.db.prepare("INSERT INTO attachments(id,filename,mime_type,size,uploader,stored_name) VALUES (?,?,?,?,?,?)")
+      .run(input.id, input.filename, input.mimeType, input.size, identity.name, input.storedName);
+    return this.attachment(input.id);
+  }
+
+  attachment(id: string) { return this.db.prepare("SELECT id,filename,mime_type,size,uploader,stored_name,created_at FROM attachments WHERE id=?").get(id); }
 }
