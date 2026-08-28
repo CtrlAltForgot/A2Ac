@@ -24,6 +24,9 @@ const upload = multer({ storage: multer.diskStorage({ destination: store.uploads
 const app = express();
 const httpServer = createServer(app);
 const sockets = new WebSocketServer({ noServer: true });
+const runnerTyping=new Map<string,{agent:string;channel:string;parentId:number|null;expiresAt:number}>();
+const broadcast=(type:string,value:unknown)=>{const payload=JSON.stringify({type,value});for(const client of sockets.clients)if(client.readyState===WebSocket.OPEN)client.send(payload);};
+const activeTyping=()=>{const now=Date.now();for(const [agent,value] of runnerTyping)if(value.expiresAt<=now)runnerTyping.delete(agent);return[...runnerTyping.values()];};
 const liveHumanNames = () => new Set([...sockets.clients]
   .map((client) => (client as WebSocket & { identity?: { name: string; role: string } }).identity)
   .filter((identity) => identity?.role !== "agent")
@@ -58,7 +61,7 @@ app.get("/api/me", (req, res) => {
 });
 app.get("/api/snapshot", (req, res) => {const channel=String(req.query.channel??"general");res.json({
   me: { ...req.identity, profile: store.ensureProfile(req.identity!.name), editableProfiles: editableProfiles(req.identity!) },
-  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(channel), activities: store.activities(), claims: store.claims(), presence: visiblePresence(req.identity!),
+  channels: store.channels(), profiles: store.profiles(), tasks: store.tasks(channel), activities: store.activities(), claims: store.claims(), presence: visiblePresence(req.identity!),typing:activeTyping().filter(item=>item.channel===channel),
   workspace: store.workspace(), pins: store.pins(channel), events: store.events(channel, Number(req.query.after ?? 0), Number(req.query.limit ?? 100))
 });});
 app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot pin guidance"});try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});
@@ -121,6 +124,12 @@ app.post("/api/runner/channel",(req,res)=>{
   if(typeof channel!=="string"||!/^[a-z0-9][a-z0-9-_]{0,62}$/.test(channel))return res.status(400).json({error:"Valid channel is required"});
   res.json(store.setActiveChannel(req.identity!,channel));
 });
+app.post("/api/runner/typing",(req,res)=>{
+  if(req.identity!.role!=="agent")return res.status(403).json({error:"Agent identity required"});
+  if(req.body?.active){const channel=String(req.body.channel??store.activeChannel(req.identity!.name));const parentId=Number(req.body.parentId)||null;runnerTyping.set(req.identity!.name,{agent:req.identity!.name,channel,parentId,expiresAt:Date.now()+10*60_000});}
+  else runnerTyping.delete(req.identity!.name);
+  const value=activeTyping();broadcast("typing",value);res.json({typing:value});
+});
 app.post("/api/runner/delegations/:id/finish", (req, res) => {
   if (req.identity!.role !== "agent") return res.status(403).json({ error: "Agent identity required" });
   const status = req.body?.status;
@@ -182,8 +191,7 @@ sockets.on("connection", (socket) => {
   });
 });
 store.onChange = (type, value) => {
-  const payload = JSON.stringify({ type, value });
-  for (const client of sockets.clients) if (client.readyState === WebSocket.OPEN) client.send(payload);
+  broadcast(type,value);
 };
 
 httpServer.listen(port, "0.0.0.0", () => console.log(`A2Ac listening on http://0.0.0.0:${port}`));
