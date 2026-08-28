@@ -4,6 +4,7 @@ $configDir = Join-Path $env:USERPROFILE ".config\a2ac-runner"
 $startupDir = [Environment]::GetFolderPath("Startup")
 $runnerUrl = "https://raw.githubusercontent.com/CtrlAltForgot/A2Ac/main/runner/a2ac-runner.mjs"
 $shareUrl = "https://raw.githubusercontent.com/CtrlAltForgot/A2Ac/main/runner/a2ac-share.mjs"
+$fetchUrl = "https://raw.githubusercontent.com/CtrlAltForgot/A2Ac/main/runner/a2ac-fetch.mjs"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js 22+ is required. Install it, reopen PowerShell, then rerun this installer." }
 $codex = Get-Command codex.cmd -ErrorAction SilentlyContinue
@@ -26,6 +27,7 @@ if (-not $codex) {
 New-Item -ItemType Directory -Force $installDir, $configDir | Out-Null
 Invoke-WebRequest $runnerUrl -OutFile (Join-Path $installDir "a2ac-runner.mjs")
 Invoke-WebRequest $shareUrl -OutFile (Join-Path $installDir "a2ac-share.mjs")
+Invoke-WebRequest $fetchUrl -OutFile (Join-Path $installDir "a2ac-fetch.mjs")
 & npm.cmd install --prefix $installDir '@openai/codex-sdk'
 if ($LASTEXITCODE -ne 0) { throw "Could not install the Codex SDK required for efficient ambient chat threads." }
 
@@ -50,6 +52,8 @@ $cli = "@echo off`r`nnode `"$installDir\a2ac-runner.mjs`" %*"
 Set-Content -Encoding ASCII (Join-Path $installDir "a2ac-runner.cmd") $cli
 $shareCli = "@echo off`r`nnode `"$installDir\a2ac-share.mjs`" %*"
 Set-Content -Encoding ASCII (Join-Path $installDir "a2ac-share.cmd") $shareCli
+$fetchCli = "@echo off`r`nnode `"$installDir\a2ac-fetch.mjs`" %*"
+Set-Content -Encoding ASCII (Join-Path $installDir "a2ac-fetch.cmd") $fetchCli
 $daemon = "@echo off`r`nnode `"$installDir\a2ac-runner.mjs`" daemon >> `"$installDir\runner.log`" 2>&1"
 Set-Content -Encoding ASCII (Join-Path $startupDir "A2Ac Runner.cmd") $daemon
 

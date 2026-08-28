@@ -159,3 +159,22 @@ test("temporary attachments can be renewed and expired bytes are deleted", () =>
   assert.equal(store.cleanupExpiredAttachments(),1);
   assert.equal(existsSync(join(store.uploadsDir,storedName)),false);
 });
+
+test("renaming a channel preserves its collaboration state", () => {
+  const store=setup(),owner={name:"owner",role:"admin" as const};
+  const event=store.event(owner,{channel:"old-project",kind:"message",summary:"Keep this history"}) as {id:number};
+  store.pin(owner,"old-project",event.id);
+  store.createTask(owner,{title:"Keep this task",channel:"old-project"});
+  store.updateActivity(alice,{channel:"old-project",title:"Keep working",status:"working"});
+  store.setActiveChannel(bob,"old-project");
+  store.renameChannel(owner,"old-project","new-project");
+  assert.equal((store.db.prepare("SELECT COUNT(*) count FROM events WHERE channel='old-project'").get() as {count:number}).count,0);
+  assert.ok((store.events("new-project") as {summary:string}[]).some(item=>item.summary==="Keep this history"));
+  assert.equal(store.pins("new-project").length,1);
+  assert.equal(store.tasks("new-project").length,1);
+  assert.equal((store.activities()[0] as {channel:string}).channel,"new-project");
+  assert.equal(store.activeChannel(bob.name),"new-project");
+  store.event(alice,{channel:"old-project",kind:"message",summary:"Posted with stale channel context"});
+  assert.ok((store.events("new-project") as {summary:string}[]).some(item=>item.summary==="Posted with stale channel context"));
+  assert.equal((store.channels() as {channel:string}[]).some(item=>item.channel==="old-project"),false);
+});

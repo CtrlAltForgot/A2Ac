@@ -81,6 +81,16 @@ app.get("/api/snapshot", (req, res) => {const channel=String(req.query.channel??
 });});
 app.post("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot pin guidance"});try{res.status(201).json(store.pin(req.identity!,String(req.params.channel),Number(req.params.eventId)));}catch(error){res.status(404).json({error:error instanceof Error?error.message:"Could not pin message"});}});
 app.delete("/api/channels/:channel/pins/:eventId",(req,res)=>{if(!allowed(req.identity!,"pin_messages"))return res.status(403).json({error:"Your role cannot unpin guidance"});res.json(store.unpin(req.identity!,String(req.params.channel),Number(req.params.eventId)));});
+app.patch("/api/channels/:channel",(req,res)=>{
+  if(!allowed(req.identity!,"manage_channels"))return res.status(403).json({error:"Your role cannot rename channels"});
+  const from=String(req.params.channel),to=String(req.body?.name??"").trim().toLowerCase().replace(/[^a-z0-9-_]/g,"-").replace(/^-+|-+$/g,"");
+  if(!/^[a-z0-9][a-z0-9-_]{0,62}$/.test(to))return res.status(400).json({error:"A valid channel name is required"});
+  try{
+    const renamed=store.renameChannel(req.identity!,from,to);
+    for(const [agent,typing] of runnerTyping)if(typing.channel===from)runnerTyping.set(agent,{...typing,channel:to});
+    res.json(renamed);
+  }catch(error){res.status(400).json({error:error instanceof Error?error.message:"Could not rename channel"});}
+});
 app.patch("/api/workspace", (req,res)=>{
   if(req.identity!.role!=="admin"&&req.identity!.name!=="owner")return res.status(403).json({error:"Only the workspace owner can change branding"});
   const {name,icon}=req.body??{};

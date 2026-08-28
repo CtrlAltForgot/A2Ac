@@ -95,9 +95,9 @@ function render() {
   const available = [...new Set(["general", ...s.channels.map(c => c.channel), state.channel])];
   const channels = [...state.channelOrder.filter(name=>available.includes(name)),...available.filter(name=>!state.channelOrder.includes(name))];
   state.channelOrder=channels;
-  $("#channels").innerHTML = channels.map(name => { const info = s.channels.find(channel => channel.channel === name); const unread = name !== state.channel && Number(info?.last_event_id || 0) > Number(state.seen[name] || 0); return `<button draggable="true" class="channel ${name === state.channel ? "active" : ""}" data-channel="${escapeHtml(name)}"><span>#</span>${escapeHtml(name)}${unread ? `<i class="unread-blip" title="New activity"></i>` : ""}</button>`; }).join("");
+  $("#channels").innerHTML = channels.map(name => { const info = s.channels.find(channel => channel.channel === name); const unread = name !== state.channel && Number(info?.last_event_id || 0) > Number(state.seen[name] || 0); return `<button draggable="true" class="channel ${name === state.channel ? "active" : ""}" data-channel="${escapeHtml(name)}" title="${name==='general'?'General channel':'Double-click or right-click to rename'}"><span>#</span>${escapeHtml(name)}${unread ? `<i class="unread-blip" title="New activity"></i>` : ""}</button>`; }).join("");
   document.querySelectorAll("[data-channel]").forEach(el => el.onclick = async () => { state.channel = el.dataset.channel; if(state.channelKey)localStorage.setItem(state.channelKey,state.channel); await refresh(); });
-  document.querySelectorAll("#channels [data-channel]").forEach(el=>{el.ondragstart=event=>{state.draggedChannel=el.dataset.channel;el.classList.add("dragging");event.dataTransfer.effectAllowed="move";};el.ondragend=()=>{state.draggedChannel=null;el.classList.remove("dragging");};el.ondragover=event=>{event.preventDefault();event.dataTransfer.dropEffect="move";};el.ondrop=event=>{event.preventDefault();const target=el.dataset.channel,source=state.draggedChannel;if(!source||source===target)return;const order=state.channelOrder.filter(name=>name!==source),index=order.indexOf(target);order.splice(index,0,source);state.channelOrder=order;localStorage.setItem(state.channelOrderKey,JSON.stringify(order));render();};});
+  document.querySelectorAll("#channels [data-channel]").forEach(el=>{el.ondblclick=event=>{event.preventDefault();renameProjectSpace(el.dataset.channel);};el.oncontextmenu=event=>{event.preventDefault();renameProjectSpace(el.dataset.channel);};el.ondragstart=event=>{state.draggedChannel=el.dataset.channel;el.classList.add("dragging");event.dataTransfer.effectAllowed="move";};el.ondragend=()=>{state.draggedChannel=null;el.classList.remove("dragging");};el.ondragover=event=>{event.preventDefault();event.dataTransfer.dropEffect="move";};el.ondrop=event=>{event.preventDefault();const target=el.dataset.channel,source=state.draggedChannel;if(!source||source===target)return;const order=state.channelOrder.filter(name=>name!==source),index=order.indexOf(target);order.splice(index,0,source);state.channelOrder=order;localStorage.setItem(state.channelOrderKey,JSON.stringify(order));render();};});
   $("#online-count").textContent = s.presence.length;
   $("#presence").innerHTML = s.presence.map(p => { const editable = s.me.editableProfiles.includes(p.name), activity = p.current_task ? "working" : p.status; return `<button class="person ${editable ? "editable" : ""}" data-profile-name="${escapeHtml(p.name)}" ${editable ? `data-profile="${escapeHtml(p.name)}"` : "disabled"}><div class="person-avatar">${avatarContent(p)}<i></i></div><div><b>${escapeHtml(p.display_name || p.name)}</b><small>${escapeHtml(activity)} · #${escapeHtml(p.active_channel || "general")}</small></div></button>`; }).join("");
   document.querySelectorAll("[data-profile]").forEach(el => el.onclick = () => openProfile(el.dataset.profile));
@@ -180,6 +180,17 @@ async function addProjectSpace() {
   state.channel = name;
   if(state.channelKey)localStorage.setItem(state.channelKey,state.channel);
   await api("/api/events", { method: "POST", body: JSON.stringify({ channel: name, kind: "project.created", summary: `Created project space #${name}` }) });
+  await refresh();
+}
+async function renameProjectSpace(from){
+  if(from==="general")return;
+  const raw=prompt(`Rename #${from}`,from),name=raw?.trim().toLowerCase().replace(/[^a-z0-9-_]/g,"-").replace(/^-+|-+$/g,"");
+  if(!name||name===from)return;
+  await api(`/api/channels/${encodeURIComponent(from)}`,{method:"PATCH",body:JSON.stringify({name})});
+  state.channelOrder=state.channelOrder.map(channel=>channel===from?name:channel);
+  if(state.channelOrderKey)localStorage.setItem(state.channelOrderKey,JSON.stringify(state.channelOrder));
+  if(state.seen[from]!==undefined){state.seen[name]=state.seen[from];delete state.seen[from];if(state.seenKey)localStorage.setItem(state.seenKey,JSON.stringify(state.seen));}
+  if(state.channel===from){state.channel=name;if(state.channelKey)localStorage.setItem(state.channelKey,name);}
   await refresh();
 }
 $("#add-channel").onclick = addProjectSpace;

@@ -54,6 +54,7 @@ export class Store {
         created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL DEFAULT (datetime('now','+7 days'))
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS channel_aliases (old_channel TEXT PRIMARY KEY, new_channel TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pins (
         channel TEXT NOT NULL, event_id INTEGER NOT NULL, pinned_by TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(channel,event_id)
@@ -113,11 +114,22 @@ export class Store {
     return row;
   }
 
+  private channelName(channel: string) {
+    let current=channel;
+    for(let depth=0;depth<10;depth++){
+      const alias=this.db.prepare("SELECT new_channel FROM channel_aliases WHERE old_channel=?").get(current) as {new_channel:string}|undefined;
+      if(!alias||alias.new_channel===current)break;
+      current=alias.new_channel;
+    }
+    return current;
+  }
+
   event(identity: Identity, input: EventInput) {
+    const channel=this.channelName(input.channel ?? this.activeChannel(identity.name));
     const result = this.db.prepare(`INSERT INTO events
       (channel, kind, actor, actor_role, summary, detail, task_id, parent_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(input.channel ?? this.activeChannel(identity.name), input.kind, identity.name, identity.role, input.summary,
+      .run(channel, input.kind, identity.name, identity.role, input.summary,
         input.detail === undefined ? null : JSON.stringify(input.detail), input.taskId ?? null, input.parentId ?? null);
     const value = this.getEvent(Number(result.lastInsertRowid));
     this.touch(identity, "online");
@@ -130,6 +142,7 @@ export class Store {
   }
 
   events(channel = "general", after = 0, limit = 100) {
+    channel=this.channelName(channel);
     const capped = Math.min(limit, 250);
     const rows = after > 0
       ? this.db.prepare("SELECT * FROM events WHERE channel = ? AND id > ? ORDER BY id ASC LIMIT ?").all(channel, after, capped)
@@ -138,6 +151,7 @@ export class Store {
   }
 
   unansweredHumanEventIds(channel:string,limit=20){
+    channel=this.channelName(channel);
     return (this.db.prepare(`SELECT e.id FROM events e
       WHERE e.channel=? AND e.actor_role!='agent' AND e.kind='message'
       AND NOT EXISTS (SELECT 1 FROM events reply WHERE reply.parent_id=e.id AND reply.actor_role='agent')
@@ -151,9 +165,29 @@ export class Store {
     ) GROUP BY channel ORDER BY last_event_id DESC`).all();
   }
 
+  renameChannel(identity: Identity, from: string, to: string) {
+    from=this.channelName(from);to=this.channelName(to);
+    if (from === "general") throw new Error("The general channel cannot be renamed");
+    if (from === to) return { from, to };
+    const channels = this.channels() as { channel: string }[];
+    if (!channels.some((item) => item.channel === from)) throw new Error("Channel not found");
+    if (channels.some((item) => item.channel === to)) throw new Error("That channel already exists");
+    this.db.transaction(() => {
+      for (const table of ["events", "tasks", "pins", "agent_activities", "delegation_requests"])
+        this.db.prepare(`UPDATE ${table} SET channel=? WHERE channel=?`).run(to, from);
+      this.db.prepare("UPDATE profiles SET active_channel=?,updated_at=datetime('now') WHERE active_channel=?").run(to, from);
+      this.db.prepare("UPDATE channel_aliases SET new_channel=? WHERE new_channel=?").run(to,from);
+      this.db.prepare("INSERT OR REPLACE INTO channel_aliases(old_channel,new_channel) VALUES (?,?)").run(from,to);
+    })();
+    const value = { from, to, actor: identity.name };
+    this.onChange("channel.renamed", value);
+    return value;
+  }
+
   activities() { return this.db.prepare("SELECT * FROM agent_activities ORDER BY updated_at DESC").all(); }
 
   updateActivity(identity:Identity,input:{channel:string;title:string;description?:string;status:string}) {
+    input={...input,channel:this.channelName(input.channel)};
     if(identity.role!=="agent")throw new Error("Agent identity required");
     if(["idle","completed"].includes(input.status)){this.db.prepare("DELETE FROM agent_activities WHERE agent=?").run(identity.name);this.onChange("activity",{agent:identity.name,removed:true});return{agent:identity.name,removed:true};}
     if(!["working","waiting","stalled","paused","blocked"].includes(input.status))throw new Error("Invalid activity status");
@@ -166,20 +200,21 @@ export class Store {
     this.setActiveChannel(identity,input.channel);const value=this.db.prepare("SELECT * FROM agent_activities WHERE agent=?").get(identity.name);this.onChange("activity",value);return value;
   }
 
-  pins(channel: string) { return (this.db.prepare(`SELECT p.channel,p.event_id,p.pinned_by,p.created_at,e.summary,e.actor,e.actor_role
+  pins(channel: string) { channel=this.channelName(channel);return (this.db.prepare(`SELECT p.channel,p.event_id,p.pinned_by,p.created_at,e.summary,e.actor,e.actor_role
     FROM pins p JOIN events e ON e.id=p.event_id WHERE p.channel=? ORDER BY p.created_at`).all(channel) as Record<string,unknown>[]).map(row=>this.parse(row)); }
 
   pin(identity: Identity, channel: string, eventId: number) {
+    channel=this.channelName(channel);
     const event=this.getEvent(eventId) as {channel:string}|undefined;
     if(!event||event.channel!==channel)throw new Error("Message not found in this channel");
     this.db.prepare("INSERT OR REPLACE INTO pins(channel,event_id,pinned_by) VALUES (?,?,?)").run(channel,eventId,identity.name);
     const value=this.pins(channel).find(pin=>pin.event_id===eventId);this.onChange("pin",value);return value;
   }
 
-  unpin(identity: Identity, channel:string,eventId:number){this.db.prepare("DELETE FROM pins WHERE channel=? AND event_id=?").run(channel,eventId);this.onChange("pin",{channel,eventId,removed:true,actor:identity.name});return{removed:true};}
+  unpin(identity: Identity, channel:string,eventId:number){channel=this.channelName(channel);this.db.prepare("DELETE FROM pins WHERE channel=? AND event_id=?").run(channel,eventId);this.onChange("pin",{channel,eventId,removed:true,actor:identity.name});return{removed:true};}
 
   createTask(identity: Identity, input: { title: string; description?: string; priority?: string; assignee?: string; channel?:string }) {
-    const channel=input.channel??this.activeChannel(identity.name);
+    const channel=this.channelName(input.channel??this.activeChannel(identity.name));
     const result = this.db.prepare(`INSERT INTO tasks (title, description, priority, assignee, created_by, channel)
       VALUES (?, ?, ?, ?, ?, ?)`).run(input.title, input.description ?? "", input.priority ?? "normal", input.assignee ?? null, identity.name,channel);
     const value = this.task(Number(result.lastInsertRowid));
@@ -189,7 +224,7 @@ export class Store {
   }
 
   task(id: number) { return this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id); }
-  tasks(channel?:string) { return channel?this.db.prepare("SELECT * FROM tasks WHERE channel=? ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, updated_at DESC").all(channel):this.db.prepare("SELECT * FROM tasks ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, updated_at DESC").all(); }
+  tasks(channel?:string) { return channel?this.db.prepare("SELECT * FROM tasks WHERE channel=? ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, updated_at DESC").all(this.channelName(channel)):this.db.prepare("SELECT * FROM tasks ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, updated_at DESC").all(); }
 
   updateTask(identity: Identity, id: number, patch: { status?: string; assignee?: string | null; description?: string; expectedVersion?: number }) {
     const current = this.task(id) as Record<string, unknown> | undefined;
@@ -304,6 +339,7 @@ export class Store {
   }
 
   setActiveChannel(identity: Identity, channel: string) {
+    channel=this.channelName(channel);
     this.ensureProfile(identity.name);
     this.db.prepare("UPDATE profiles SET active_channel=?,updated_at=datetime('now') WHERE name=?").run(channel, identity.name);
     this.touch(identity, "online");
@@ -315,7 +351,7 @@ export class Store {
   requestDelegation(identity: Identity, targetAgent: string, request: string, channel?: string, options:{requestType?:"delegation"|"team";taskId?:number}={}) {
     const target = this.ensureProfile(targetAgent) as { accept_delegations: number; active_channel: string };
     if (!target.accept_delegations) throw new Error(`${targetAgent} is not accepting delegation requests`);
-    const requestChannel = channel ?? this.activeChannel(identity.name);
+    const requestChannel = this.channelName(channel ?? this.activeChannel(identity.name));
     const result = this.db.prepare("INSERT INTO delegation_requests(requester,target_agent,channel,request,request_type,task_id) VALUES (?,?,?,?,?,?)")
       .run(identity.name, targetAgent, requestChannel, request,options.requestType??"delegation",options.taskId??null);
     const value = this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(result.lastInsertRowid);
