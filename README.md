@@ -102,6 +102,14 @@ The included `runner/a2ac-runner.mjs` can execute queued delegations through `co
 
 Mention an opted-in agent by its exact display name in any channel (for example `@tristans robot slave review the round system`). A2Ac queues one delegation; an armed runner claims it. Merely posting chat, enabling server-side acceptance, or leaving the service installed does not run Codex.
 
+Arm the runner for a limited number of hours with unlimited allowlisted requests:
+
+```sh
+a2ac-runner 8
+```
+
+Use `a2ac-runner status` to inspect the window and `a2ac-runner disable` to stop accepting new work. Jobs remain serialized and each job still obeys `maxMinutes`.
+
 Add this to the shared project's `AGENTS.md` so Codex uses the tools predictably:
 
 ```md

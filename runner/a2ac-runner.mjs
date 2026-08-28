@@ -12,15 +12,17 @@ async function json(path, fallback = {}) { try { return JSON.parse(await readFil
 async function save(path, value) { await mkdir(dirname(path), { recursive: true, mode: 0o700 }); const temp = `${path}.tmp`; await writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 }); await rename(temp, path); await chmod(path, 0o600); }
 
 const command = process.argv[2] || "daemon";
-if (command === "enable") {
-  const hours = Math.max(1, Math.min(Number(process.argv[3] || 8), 24));
-  const jobs = Math.max(1, Math.min(Number(process.argv[4] || 3), 10));
+if (command === "enable" || /^\d+(?:\.\d+)?$/.test(command)) {
+  const shorthand = command !== "enable";
+  const hours = Math.max(1, Math.min(Number(shorthand ? command : process.argv[3] || 8), 24));
+  const requestedJobs = shorthand || process.argv[4] === undefined ? -1 : Number(process.argv[4]);
+  const jobs = requestedJobs === -1 ? -1 : Math.max(1, Math.min(requestedJobs, 100));
   await save(statePath, { enabledUntil: Date.now() + hours * 3_600_000, jobsRemaining: jobs });
-  console.log(`A2Ac runner armed for ${hours}h / ${jobs} jobs. Disable with: a2ac-runner disable`);
+  console.log(`A2Ac runner armed for ${hours}h / ${jobs === -1 ? "unlimited jobs" : `${jobs} jobs`}. Disable with: a2ac-runner disable`);
   process.exit(0);
 }
 if (command === "disable") { await save(statePath, { enabledUntil: 0, jobsRemaining: 0 }); console.log("A2Ac runner disabled."); process.exit(0); }
-if (command === "status") { const state = await json(statePath); console.log(state.enabledUntil > Date.now() && state.jobsRemaining > 0 ? `armed until ${new Date(state.enabledUntil).toLocaleString()} (${state.jobsRemaining} jobs left)` : "disabled"); process.exit(0); }
+if (command === "status") { const state = await json(statePath); const armed = state.enabledUntil > Date.now() && state.jobsRemaining !== 0; console.log(armed ? `armed until ${new Date(state.enabledUntil).toLocaleString()} (${state.jobsRemaining === -1 ? "unlimited jobs" : `${state.jobsRemaining} jobs left`})` : "disabled"); process.exit(0); }
 
 const config = await json(configPath);
 for (const field of ["serverUrl", "agentKey", "codexPath", "projects"]) if (!config[field]) throw new Error(`Missing ${field} in ${configPath}`);
@@ -50,10 +52,10 @@ console.log("A2Ac runner service started; local arming is currently required bef
 for (;;) {
   try {
     const state = await json(statePath);
-    if (state.enabledUntil > Date.now() && state.jobsRemaining > 0) {
+    if (state.enabledUntil > Date.now() && state.jobsRemaining !== 0) {
       const { request } = await api("/api/runner/delegations/next");
       if (request) {
-        await save(statePath, { ...state, jobsRemaining: state.jobsRemaining - 1 });
+        await save(statePath, { ...state, jobsRemaining: state.jobsRemaining > 0 ? state.jobsRemaining - 1 : -1 });
         let outcome;
         try { outcome = await runCodex(request); } catch (error) { outcome = { status: "failed", result: error instanceof Error ? error.message : String(error) }; }
         await api(`/api/runner/delegations/${request.id}/finish`, { method: "POST", body: JSON.stringify(outcome) });
