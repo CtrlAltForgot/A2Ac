@@ -13,17 +13,17 @@ async function save(path, value) { await mkdir(dirname(path), { recursive: true,
 
 const command = process.argv[2] || "daemon";
 if (command === "enable" || /^\d+(?:\.\d+)?$/.test(command)) {
-  const shorthand = command !== "enable";
-  const hours = Math.max(1, Math.min(Number(shorthand ? command : process.argv[3] || 8), 24));
-  const requestedJobs = shorthand || process.argv[4] === undefined ? -1 : Number(process.argv[4]);
+  const persistent=command==="enable",shorthand=!persistent;
+  const hours = persistent?null:Math.max(1,Math.min(Number(command),24));
+  const requestedJobs = persistent||process.argv[3] === undefined ? -1 : Number(process.argv[3]);
   const jobs = requestedJobs === -1 ? -1 : Math.max(1, Math.min(requestedJobs, 100));
   const armedAt=Date.now();
-  await save(statePath, { enabledUntil: armedAt + hours * 3_600_000, jobsRemaining: jobs, armedAt });
-  console.log(`A2Ac runner armed for ${hours}h / ${jobs === -1 ? "unlimited jobs" : `${jobs} jobs`}. Disable with: a2ac-runner disable`);
+  await save(statePath, { persistent,enabledUntil:persistent?null:armedAt+hours*3_600_000,jobsRemaining:jobs,armedAt });
+  console.log(`A2Ac runner armed ${persistent?"until disabled":`for ${hours}h`} / ${jobs === -1 ? "unlimited jobs" : `${jobs} jobs`}. Disable with: a2ac-runner disable`);
   process.exit(0);
 }
 if (command === "disable") { await save(statePath, { enabledUntil: 0, jobsRemaining: 0 }); console.log("A2Ac runner disabled."); process.exit(0); }
-if (command === "status") { const state = await json(statePath); const armed = state.enabledUntil > Date.now() && state.jobsRemaining !== 0; console.log(armed ? `armed until ${new Date(state.enabledUntil).toLocaleString()} (${state.jobsRemaining === -1 ? "unlimited jobs" : `${state.jobsRemaining} jobs left`})` : "disabled"); process.exit(0); }
+if (command === "status") { const state = await json(statePath); const armed = (state.persistent||state.enabledUntil>Date.now())&&state.jobsRemaining!==0; console.log(armed ? `${state.persistent?"armed until disabled":`armed until ${new Date(state.enabledUntil).toLocaleString()}`} (${state.jobsRemaining === -1 ? "unlimited jobs" : `${state.jobsRemaining} jobs left`})` : "disabled"); process.exit(0); }
 
 const config = await json(configPath);
 for (const field of ["serverUrl", "agentKey", "codexPath", "projects"]) if (!config[field]) throw new Error(`Missing ${field} in ${configPath}`);
@@ -57,7 +57,7 @@ console.log("A2Ac runner service started; local arming is currently required bef
 for (;;) {
   try {
     const state = await json(statePath);
-    if (state.enabledUntil > Date.now() && state.jobsRemaining !== 0) {
+    if ((state.persistent||state.enabledUntil > Date.now()) && state.jobsRemaining !== 0) {
       if(!state.armedAt){state.armedAt=Date.now();await save(statePath,state);}
       const me=await api("/api/me");
       const previousChannel=me.profile?.active_channel||"general";

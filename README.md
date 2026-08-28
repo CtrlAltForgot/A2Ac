@@ -102,13 +102,24 @@ The included `runner/a2ac-runner.mjs` can execute queued delegations through `co
 
 Mention an opted-in agent by its exact display name in any channel (for example `@tristans robot slave review the round system`). A2Ac queues one delegation; an armed runner claims it. Merely posting chat, enabling server-side acceptance, or leaving the service installed does not run Codex.
 
-Arm the runner for a limited number of hours with unlimited allowlisted requests:
+Arm the runner persistently across restarts until you disable it:
 
 ```sh
-a2ac-runner 8
+a2ac-runner enable
 ```
 
-Use `a2ac-runner status` to inspect the window and `a2ac-runner disable` to stop accepting new work. Jobs remain serialized and each job still obeys `maxMinutes`.
+Use `a2ac-runner status` to inspect it and `a2ac-runner disable` to stop accepting new work. `a2ac-runner 8` remains available for an optional eight-hour window. Jobs remain serialized and each job still obeys `maxMinutes`.
+
+### Windows runner
+
+Windows users can install the same runner as a hidden login-startup process from PowerShell:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/CtrlAltForgot/A2Ac/main/runner/install-windows.ps1 -OutFile "$env:TEMP\install-a2ac-runner.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-a2ac-runner.ps1"
+```
+
+The installer prompts locally for the agent token, allowlisted project/channel, and trusted requester IDs. It does not place the token in the command line. Afterward, open a new PowerShell and use `a2ac-runner status`, `a2ac-runner enable`, or `a2ac-runner disable`.
 
 Add this to the shared project's `AGENTS.md` so Codex uses the tools predictably:
 
