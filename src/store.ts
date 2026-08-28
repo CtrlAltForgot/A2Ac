@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { EventInput, Identity } from "./types.js";
 
@@ -45,13 +45,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS delegation_requests (
         id INTEGER PRIMARY KEY, requester TEXT NOT NULL, target_agent TEXT NOT NULL,
         channel TEXT NOT NULL, request TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
-        request_type TEXT NOT NULL DEFAULT 'delegation', source_event_id INTEGER,
+        request_type TEXT NOT NULL DEFAULT 'delegation', source_event_id INTEGER, task_id INTEGER,
         created_at TEXT NOT NULL DEFAULT (datetime('now')), claimed_at TEXT, finished_at TEXT
       );
       CREATE TABLE IF NOT EXISTS attachments (
         id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime_type TEXT NOT NULL,
         size INTEGER NOT NULL, uploader TEXT NOT NULL, stored_name TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL DEFAULT (datetime('now','+7 days'))
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pins (
@@ -89,6 +89,12 @@ export class Store {
     if (!delegationColumns.some((column) => column.name === "finished_at")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN finished_at TEXT");
     if (!delegationColumns.some((column) => column.name === "request_type")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'delegation'");
     if (!delegationColumns.some((column) => column.name === "source_event_id")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN source_event_id INTEGER");
+    if (!delegationColumns.some((column) => column.name === "task_id")) this.db.exec("ALTER TABLE delegation_requests ADD COLUMN task_id INTEGER");
+    const attachmentColumns=this.db.pragma("table_info(attachments)") as {name:string}[];
+    if(!attachmentColumns.some(column=>column.name==="expires_at")){
+      this.db.exec("ALTER TABLE attachments ADD COLUMN expires_at TEXT");
+      this.db.exec("UPDATE attachments SET expires_at=datetime(created_at,'+7 days') WHERE expires_at IS NULL");
+    }
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ambient_reply_once ON delegation_requests(target_agent,source_event_id) WHERE source_event_id IS NOT NULL");
     // Older builds could queue the same human post for several ambient agents. Keep
     // the earliest dispatch, then enforce one ambient responder per source message.
@@ -196,6 +202,7 @@ export class Store {
       updated_at=datetime('now') WHERE id=?`).run(status, patch.assignee === undefined ? current.assignee : patch.assignee,
         patch.description ?? current.description, startedAt ?? null, id);
     const value = this.task(id);
+    if(["done","cancelled"].includes(String(status)))this.db.prepare("UPDATE delegation_requests SET status='expired',finished_at=datetime('now') WHERE request_type='team' AND task_id=? AND status='pending'").run(id);
     this.event(identity, { kind: "task.updated", summary: `Updated task #${id} to ${status}`, taskId: id, detail: { patch, task: value } });
     this.onChange("task", value);
     return value;
@@ -305,12 +312,12 @@ export class Store {
     return value;
   }
 
-  requestDelegation(identity: Identity, targetAgent: string, request: string, channel?: string) {
+  requestDelegation(identity: Identity, targetAgent: string, request: string, channel?: string, options:{requestType?:"delegation"|"team";taskId?:number}={}) {
     const target = this.ensureProfile(targetAgent) as { accept_delegations: number; active_channel: string };
     if (!target.accept_delegations) throw new Error(`${targetAgent} is not accepting delegation requests`);
     const requestChannel = channel ?? this.activeChannel(identity.name);
-    const result = this.db.prepare("INSERT INTO delegation_requests(requester,target_agent,channel,request) VALUES (?,?,?,?)")
-      .run(identity.name, targetAgent, requestChannel, request);
+    const result = this.db.prepare("INSERT INTO delegation_requests(requester,target_agent,channel,request,request_type,task_id) VALUES (?,?,?,?,?,?)")
+      .run(identity.name, targetAgent, requestChannel, request,options.requestType??"delegation",options.taskId??null);
     const value = this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(result.lastInsertRowid);
     this.event(identity, { channel: requestChannel, kind: "delegation.requested", summary: `Requested help from ${targetAgent}`, detail: value });
     return value;
@@ -322,14 +329,19 @@ export class Store {
     const alreadyQueued=this.db.prepare("SELECT id FROM delegation_requests WHERE request_type='ambient' AND source_event_id=?").get(event.id);
     if(alreadyQueued)return null;
     const pending=this.db.prepare("SELECT id FROM delegation_requests WHERE target_agent=? AND channel=? AND request_type='ambient' AND status='pending' ORDER BY id DESC LIMIT 1").get(targetAgent,event.channel) as {id:number}|undefined;
-    if(pending){this.db.prepare("UPDATE delegation_requests SET requester=?,request=?,source_event_id=?,created_at=datetime('now') WHERE id=?").run(identity.name,event.summary,event.id,pending.id);return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(pending.id);}
+    if(pending){this.db.prepare("UPDATE delegation_requests SET requester=?,request=request || char(10) || char(10) || ?,source_event_id=?,created_at=datetime('now') WHERE id=?").run(identity.name,`Follow-up: ${event.summary}`,event.id,pending.id);return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(pending.id);}
     const result=this.db.prepare(`INSERT OR IGNORE INTO delegation_requests(requester,target_agent,channel,request,request_type,source_event_id)
       VALUES (?,?,?,?, 'ambient',?)`).run(identity.name,targetAgent,event.channel,event.summary,event.id);
     if(!result.changes)return null;
     return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(result.lastInsertRowid);
   }
 
-  delegationsFor(name: string) { return this.db.prepare("SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending' ORDER BY id").all(name); }
+  activeAmbientAgent(channel:string){return (this.db.prepare("SELECT target_agent FROM delegation_requests WHERE request_type='ambient' AND channel=? AND status='running' ORDER BY claimed_at DESC LIMIT 1").get(channel) as {target_agent:string}|undefined)?.target_agent;}
+
+  claimNextAmbient(targetAgent:string,channel:string){return this.db.transaction(()=>{const next=this.db.prepare("SELECT id FROM delegation_requests WHERE target_agent=? AND channel=? AND request_type='ambient' AND status='pending' ORDER BY id LIMIT 1").get(targetAgent,channel) as {id:number}|undefined;if(!next)return null;this.db.prepare("UPDATE delegation_requests SET status='running',claimed_at=datetime('now') WHERE id=? AND status='pending'").run(next.id);return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(next.id);})();}
+
+  delegationsFor(name: string) { return this.db.prepare(`SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending'
+    AND (request_type!='team' OR NOT EXISTS(SELECT 1 FROM agent_activities WHERE agent=?)) ORDER BY id`).all(name,name); }
 
   claimNextDelegation(targetAgent: string, notBefore?: string) {
     const claim = this.db.transaction(() => {
@@ -337,9 +349,12 @@ export class Store {
       if (!profile?.accept_delegations&&!profile?.ambient_chat) return null;
       this.db.prepare("UPDATE delegation_requests SET status='pending',claimed_at=NULL WHERE target_agent=? AND status='running' AND claimed_at < datetime('now','-2 hours')").run(targetAgent);
       if (notBefore) this.db.prepare("UPDATE delegation_requests SET status='expired',finished_at=datetime('now') WHERE target_agent=? AND status='pending' AND created_at < ?").run(targetAgent, notBefore);
+      this.db.prepare(`UPDATE delegation_requests SET status='expired',finished_at=datetime('now') WHERE target_agent=? AND request_type='team' AND status='pending'
+        AND EXISTS(SELECT 1 FROM tasks WHERE tasks.id=delegation_requests.task_id AND tasks.status IN ('done','cancelled'))`).run(targetAgent);
       const next = this.db.prepare(`SELECT * FROM delegation_requests WHERE target_agent=? AND status='pending'
+        AND (request_type!='team' OR NOT EXISTS(SELECT 1 FROM agent_activities WHERE agent=?))
         AND ((request_type='ambient' AND ? AND NOT EXISTS(SELECT 1 FROM delegation_requests recent WHERE recent.target_agent=? AND recent.request_type='ambient' AND recent.finished_at>datetime('now','-45 seconds'))) OR (request_type!='ambient' AND ?)) ORDER BY id LIMIT 1`)
-        .get(targetAgent,profile.ambient_chat?1:0,targetAgent,profile.accept_delegations?1:0) as { id: number } | undefined;
+        .get(targetAgent,targetAgent,profile.ambient_chat?1:0,targetAgent,profile.accept_delegations?1:0) as { id: number } | undefined;
       if (!next) return null;
       this.db.prepare("UPDATE delegation_requests SET status='running',claimed_at=datetime('now') WHERE id=? AND status='pending'").run(next.id);
       return this.db.prepare("SELECT * FROM delegation_requests WHERE id=?").get(next.id);
@@ -357,10 +372,15 @@ export class Store {
   }
 
   createAttachment(identity: Identity, input: { id: string; filename: string; mimeType: string; size: number; storedName: string }) {
-    this.db.prepare("INSERT INTO attachments(id,filename,mime_type,size,uploader,stored_name) VALUES (?,?,?,?,?,?)")
+    this.cleanupExpiredAttachments();
+    this.db.prepare("INSERT INTO attachments(id,filename,mime_type,size,uploader,stored_name,expires_at) VALUES (?,?,?,?,?,?,datetime('now','+7 days'))")
       .run(input.id, input.filename, input.mimeType, input.size, identity.name, input.storedName);
     return this.attachment(input.id);
   }
 
-  attachment(id: string) { return this.db.prepare("SELECT id,filename,mime_type,size,uploader,stored_name,created_at FROM attachments WHERE id=?").get(id); }
+  cleanupExpiredAttachments(){const expired=this.db.prepare("SELECT stored_name FROM attachments WHERE expires_at<=datetime('now')").all() as {stored_name:string}[];for(const item of expired){try{unlinkSync(join(this.uploadsDir,item.stored_name));}catch{/* already removed */}}if(expired.length)this.db.prepare("DELETE FROM attachments WHERE expires_at<=datetime('now')").run();return expired.length;}
+
+  attachment(id: string) { this.cleanupExpiredAttachments();return this.db.prepare("SELECT id,filename,mime_type,size,uploader,stored_name,created_at,expires_at FROM attachments WHERE id=?").get(id); }
+
+  renewAttachment(identity:Identity,id:string,days=7){this.cleanupExpiredAttachments();const item=this.attachment(id) as {id:string}|undefined;if(!item)throw new Error("Attachment not found or already expired");const safeDays=Math.max(1,Math.min(Math.floor(days),30));this.db.prepare("UPDATE attachments SET expires_at=datetime('now',?) WHERE id=?").run(`+${safeDays} days`,id);const value=this.attachment(id);this.onChange("attachment",{id,renewedBy:identity.name,expiresAt:(value as {expires_at:string}).expires_at});return value;}
 }

@@ -19,7 +19,8 @@ for (const entry of (process.env.A2AC_AGENT_OWNERS ?? "owner-agent:owner,buddy-a
   if (agent && owner) agentOwners.set(agent, owner);
 }
 const store = new Store(dataDir);
-const maxUploadMb = Math.max(1, Math.min(Number(process.env.A2AC_MAX_UPLOAD_MB ?? 100), 500));
+const attachmentCleanup=setInterval(()=>store.cleanupExpiredAttachments(),60*60_000);attachmentCleanup.unref();
+const maxUploadMb = Math.max(1, Math.min(Number(process.env.A2AC_MAX_UPLOAD_MB ?? 1024), 4096));
 const upload = multer({ storage: multer.diskStorage({ destination: store.uploadsDir, filename: (_req, _file, callback) => callback(null, randomUUID()) }), limits: { fileSize: maxUploadMb * 1024 * 1024, files: 1 } });
 const app = express();
 const httpServer = createServer(app);
@@ -105,6 +106,18 @@ app.post("/api/attachments", (req,res,next)=>{if(!allowed(req.identity!,"upload_
   const saved=store.createAttachment(req.identity!, { id, filename: req.file.originalname.slice(0, 240), mimeType: req.file.mimetype || "application/octet-stream", size: req.file.size, storedName: req.file.filename }) as Record<string,unknown>;
   const {stored_name,...visible}=saved; res.status(201).json(visible);
 });
+app.post("/api/attachments/share",(req,res,next)=>{if(!allowed(req.identity!,"upload_files"))return res.status(403).json({error:"Your role cannot upload files"});next();},upload.single("file"),(req,res)=>{
+  if(!req.file)return res.status(400).json({error:"file is required"});
+  const channel=String(req.body?.channel??store.activeChannel(req.identity!.name));
+  if(!/^[a-z0-9][a-z0-9-_]{0,62}$/.test(channel))return res.status(400).json({error:"Valid channel is required"});
+  const id=randomUUID();
+  const saved=store.createAttachment(req.identity!,{id,filename:req.file.originalname.slice(0,240),mimeType:req.file.mimetype||"application/octet-stream",size:req.file.size,storedName:req.file.filename}) as Record<string,unknown>;
+  const attachment={id:saved.id,filename:saved.filename,mime_type:saved.mime_type,size:saved.size};
+  const summary=typeof req.body?.summary==="string"&&req.body.summary.trim()?req.body.summary.trim().slice(0,2000):`Shared ${req.file.originalname}`;
+  const parentId=Number(req.body?.parentId)||undefined;
+  const event=store.event(req.identity!,{channel,kind:"message",summary,parentId,detail:{attachments:[attachment]}});
+  res.status(201).json({attachment,event});
+});
 app.get("/api/attachments/:id", (req, res) => {
   const attachment = store.attachment(String(req.params.id)) as { filename: string; mime_type: string; stored_name: string } | undefined;
   if (!attachment) return res.status(404).json({ error: "Attachment not found" });
@@ -125,7 +138,9 @@ app.post("/api/events", (req, res) => {
     // Dispatch each ambient post to one live, opted-in runner. The store also guards
     // source_event_id globally so concurrent web requests cannot fan one post out.
     const now=Date.now();
-    const candidates=credentials.filter(item=>item.role==="agent"&&(runnerReady.get(item.name)??0)>now)
+    const activeAgent=store.activeAmbientAgent(channel);
+    const preferred=activeAgent?credentials.filter(item=>item.role==="agent"&&item.name===activeAgent):[];
+    const candidates=[...preferred,...credentials.filter(item=>item.role==="agent"&&item.name!==activeAgent&&(runnerReady.get(item.name)??0)>now)]
       .filter(item=>Boolean((store.ensureProfile(item.name) as {ambient_chat:number}).ambient_chat));
     for(const candidate of candidates){
       const queued=store.queueAmbientReply(req.identity!,candidate.name,event as {id:number;channel:string;summary:string});
@@ -149,6 +164,7 @@ app.get("/api/runner/delegations/next", (req, res) => {
   const notBefore=Number.isFinite(notBeforeMs)&&notBeforeMs>0?new Date(notBeforeMs).toISOString().replace("T"," ").slice(0,19):undefined;
   res.json({ request: store.claimNextDelegation(req.identity!.name,notBefore) });
 });
+app.get("/api/runner/ambient/next",(req,res)=>{if(req.identity!.role!=="agent")return res.status(403).json({error:"Agent identity required"});const channel=String(req.query.channel??"");res.json({request:store.claimNextAmbient(req.identity!.name,channel)});});
 app.post("/api/runner/channel",(req,res)=>{
   if(req.identity!.role!=="agent")return res.status(403).json({error:"Agent identity required"});
   const channel=req.body?.channel;
@@ -181,7 +197,7 @@ app.post("/api/tasks", (req, res) => {
     for(const candidate of credentials.filter(item=>item.role==="agent")){
       const profile=store.ensureProfile(candidate.name) as {accept_delegations:number};
       if(!profile.accept_delegations)continue;
-      try{store.requestDelegation(req.identity!,candidate.name,request,channel);wakeDispatches.push(candidate.name);}catch{/* mission remains passive for unavailable agents */}
+      try{store.requestDelegation(req.identity!,candidate.name,request,channel,{requestType:"team",taskId:Number(task.id)});wakeDispatches.push(candidate.name);}catch{/* mission remains passive for unavailable agents */}
     }
   }
   res.status(201).json({...task,wakeDispatches});

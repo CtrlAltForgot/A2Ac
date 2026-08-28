@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -108,4 +108,54 @@ test("one ambient message is assigned to only one opted-in agent", () => {
   assert.equal(store.queueAmbientReply(human,bob.name,{id:201,channel:"general",summary:"Anyone around?"}),null);
   assert.equal(store.delegationsFor(alice.name).length,1);
   assert.equal(store.delegationsFor(bob.name).length,0);
+});
+
+test("rapid ambient follow-ups queue behind the same running agent", () => {
+  const store=setup(),human={name:"owner",role:"human" as const};
+  store.updateProfile(alice.name,{ambientChat:true});
+  store.queueAmbientReply(human,alice.name,{id:301,channel:"general",summary:"First thought"});
+  assert.equal((store.claimNextDelegation(alice.name) as {source_event_id:number}).source_event_id,301);
+  assert.equal(store.activeAmbientAgent("general"),alice.name);
+  store.queueAmbientReply(human,alice.name,{id:302,channel:"general",summary:"and one more detail"});
+  const followUp=store.claimNextAmbient(alice.name,"general") as {source_event_id:number;request:string};
+  assert.equal(followUp.source_event_id,302);
+  assert.match(followUp.request,/one more detail/);
+});
+
+test("team wake waits for a busy agent and becomes claimable when idle", () => {
+  const store = setup();
+  const owner = { name: "owner", role: "human" as const };
+  store.updateProfile(alice.name, { acceptDelegations:true });
+  const task=store.createTask(owner,{title:"Ship together",assignee:"team",channel:"project"}) as {id:number};
+  store.updateActivity(alice,{channel:"other-project",title:"Existing work",status:"working"});
+  store.requestDelegation(owner,alice.name,"Join the team mission","project",{requestType:"team",taskId:task.id});
+  assert.equal(store.claimNextDelegation(alice.name),null);
+  assert.equal(store.delegationsFor(alice.name).length,0);
+  store.updateActivity(alice,{channel:"other-project",title:"Existing work",status:"completed"});
+  assert.equal(store.delegationsFor(alice.name).length,1);
+  assert.equal((store.claimNextDelegation(alice.name) as {task_id:number}).task_id,task.id);
+});
+
+test("finishing a team task cancels queued wakes", () => {
+  const store = setup();
+  const owner = { name: "owner", role: "human" as const };
+  store.updateProfile(alice.name, { acceptDelegations:true });
+  const task=store.createTask(owner,{title:"Short mission",assignee:"team",channel:"project"}) as {id:number};
+  store.updateActivity(alice,{channel:"project",title:"Busy",status:"working"});
+  store.requestDelegation(owner,alice.name,"Join later","project",{requestType:"team",taskId:task.id});
+  store.updateTask(owner,task.id,{status:"done"});
+  assert.equal(store.delegationsFor(alice.name).length,0);
+  store.updateActivity(alice,{channel:"project",title:"Busy",status:"completed"});
+  assert.equal(store.claimNextDelegation(alice.name),null);
+});
+
+test("temporary attachments can be renewed and expired bytes are deleted", () => {
+  const store=setup(),storedName="temporary-upload";
+  writeFileSync(join(store.uploadsDir,storedName),"artifact");
+  const item=store.createAttachment(alice,{id:"11111111-1111-4111-8111-111111111111",filename:"artifact.txt",mimeType:"text/plain",size:8,storedName}) as {expires_at:string};
+  const renewed=store.renewAttachment(alice,"11111111-1111-4111-8111-111111111111",14) as {expires_at:string};
+  assert.ok(renewed.expires_at>item.expires_at);
+  store.db.prepare("UPDATE attachments SET expires_at=datetime('now','-1 minute') WHERE id=?").run("11111111-1111-4111-8111-111111111111");
+  assert.equal(store.cleanupExpiredAttachments(),1);
+  assert.equal(existsSync(join(store.uploadsDir,storedName)),false);
 });
