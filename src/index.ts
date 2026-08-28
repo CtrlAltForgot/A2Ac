@@ -25,7 +25,7 @@ const app = express();
 const httpServer = createServer(app);
 const sockets = new WebSocketServer({ noServer: true });
 type LiveSocket=WebSocket&{identity?:{name:string;role:string};isAlive?:boolean};
-const runnerTyping=new Map<string,{agent:string;channel:string;parentId:number|null;stage:"reading"|"thinking"|"working";expiresAt:number}>();
+const runnerTyping=new Map<string,{agent:string;channel:string;parentId:number|null;stage:"reading"|"thinking"|"working";action:string;expiresAt:number}>();
 const runnerReady=new Map<string,number>();
 const broadcast=(type:string,value:unknown)=>{const payload=JSON.stringify({type,value});for(const client of sockets.clients)if(client.readyState===WebSocket.OPEN)client.send(payload);};
 const activeTyping=()=>{const now=Date.now();for(const [agent,value] of runnerTyping)if(value.expiresAt<=now)runnerTyping.delete(agent);return[...runnerTyping.values()];};
@@ -44,6 +44,16 @@ const visiblePresence = (viewer?: { name: string; role: string }) => {
 const ambientWorthy=(summary:string,detail:unknown)=>{
   const hasAttachment=Boolean(detail&&typeof detail==="object"&&Array.isArray((detail as {attachments?:unknown[]}).attachments)&&(detail as {attachments:unknown[]}).attachments.length);
   return Boolean(summary.trim())||hasAttachment;
+};
+const ambientAction=(summary:string,detail:unknown)=>{
+  const text=summary.toLowerCase();
+  const hasAttachment=Boolean(detail&&typeof detail==="object"&&Array.isArray((detail as {attachments?:unknown[]}).attachments)&&(detail as {attachments:unknown[]}).attachments.length);
+  if(hasAttachment)return "checking the attachment";
+  if(/\bweather|forecast|temperature|rain|snow\b/.test(text))return "looking up the weather";
+  if(/\bsearch|look(?:ing)? up|find out|latest|current|news|research\b/.test(text))return "looking things up";
+  if(/\bfix|build|change|update|make|implement|review|check\b/.test(text))return "checking what needs to be done";
+  if(/\?|\bwhy|how|what|when|where|who\b/.test(text))return "thinking through the question";
+  return "thinking about a reply";
 };
 
 app.disable("x-powered-by");
@@ -119,7 +129,7 @@ app.post("/api/events", (req, res) => {
     for(const candidate of candidates){
       const queued=store.queueAmbientReply(req.identity!,candidate.name,event as {id:number;channel:string;summary:string});
       if(!queued)continue;
-      runnerTyping.set(candidate.name,{agent:candidate.name,channel,parentId:Number((event as {id:number}).id),stage:"reading",expiresAt:Date.now()+10*60_000});
+      runnerTyping.set(candidate.name,{agent:candidate.name,channel,parentId:Number((event as {id:number}).id),stage:"reading",action:ambientAction(summary.trim(),detail),expiresAt:Date.now()+10*60_000});
       broadcast("typing",activeTyping());
       break;
     }
@@ -146,7 +156,7 @@ app.post("/api/runner/channel",(req,res)=>{
 });
 app.post("/api/runner/typing",(req,res)=>{
   if(req.identity!.role!=="agent")return res.status(403).json({error:"Agent identity required"});
-  if(req.body?.active){const channel=String(req.body.channel??store.activeChannel(req.identity!.name));const parentId=Number(req.body.parentId)||null;const stage=["reading","thinking","working"].includes(req.body.stage)?req.body.stage:"thinking";runnerTyping.set(req.identity!.name,{agent:req.identity!.name,channel,parentId,stage,expiresAt:Date.now()+10*60_000});}
+  if(req.body?.active){const previous=runnerTyping.get(req.identity!.name);const channel=String(req.body.channel??store.activeChannel(req.identity!.name));const parentId=Number(req.body.parentId)||null;const stage=["reading","thinking","working"].includes(req.body.stage)?req.body.stage:"thinking";const action=typeof req.body.action==="string"?req.body.action.slice(0,80):previous?.action??"working on a reply";runnerTyping.set(req.identity!.name,{agent:req.identity!.name,channel,parentId,stage,action,expiresAt:Date.now()+10*60_000});}
   else runnerTyping.delete(req.identity!.name);
   const value=activeTyping();broadcast("typing",value);res.json({typing:value});
 });
