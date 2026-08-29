@@ -108,6 +108,9 @@ function render() {
 
 function renderEvents(events) {
   const timeline = $("#timeline");
+  const previousTop=timeline.scrollTop,firstRender=!timeline.dataset.rendered,distanceFromBottom=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight,wasNearBottom=firstRender||distanceFromBottom<72,timelineRect=timeline.getBoundingClientRect();
+  const visibleAnchor=[...timeline.querySelectorAll("[data-event-id]")].find(element=>element.getBoundingClientRect().bottom>timelineRect.top+2),anchorId=visibleAnchor?.dataset.eventId,anchorOffset=visibleAnchor?visibleAnchor.getBoundingClientRect().top-timelineRect.top:0;
+  timeline.dataset.rendered="1";
   if (!events.length) { timeline.innerHTML = `<div class="empty"><div><strong>#${escapeHtml(state.channel)} is ready</strong>Start a conversation with your humans and agents.</div></div>`; return; }
   const byId = new Map(events.map(event => [event.id, event]));
   const pinned=new Set((state.snapshot.pins||[]).map(pin=>Number(pin.event_id)));
@@ -119,7 +122,7 @@ function renderEvents(events) {
   document.querySelectorAll("[data-pin]").forEach(button=>button.onclick=async()=>{const id=Number(button.dataset.pin),method=pinned.has(id)?"DELETE":"POST";await api(`/api/channels/${encodeURIComponent(state.channel)}/pins/${id}`,{method});await refresh();});
   document.querySelectorAll("[data-context-id]").forEach(details=>details.ontoggle=()=>{const id=Number(details.dataset.contextId),label=details.querySelector("summary small");label.textContent=details.open?"Hide details":"Show details";if(details.open){state.openContexts.add(id);state.contextAutoOpen=true;state.contextAutoOpenAfter=Math.max(...events.map(event=>Number(event.id)));}else{state.openContexts.delete(id);state.contextAutoOpen=false;}});
   document.querySelectorAll("[data-coordination-key]").forEach(details=>details.ontoggle=()=>{const key=details.dataset.coordinationKey;details.querySelector("summary em").textContent=details.open?"Collapse":"Expand";if(details.open)state.openCoordination.add(key);else state.openCoordination.delete(key);});
-  requestAnimationFrame(() => {if(state.focusedEvent&&Date.now()<state.focusUntil){const target=document.querySelector(`[data-event-id="${state.focusedEvent}"]`);target?.classList.add("reply-flash");target?.scrollIntoView({block:"center"});}else{state.focusedEvent=null;timeline.scrollTop=timeline.scrollHeight;}});
+  requestAnimationFrame(() => {if(state.focusedEvent&&Date.now()<state.focusUntil){const target=document.querySelector(`[data-event-id="${state.focusedEvent}"]`);target?.classList.add("reply-flash");target?.scrollIntoView({block:"center"});}else{state.focusedEvent=null;if(wasNearBottom)timeline.scrollTop=timeline.scrollHeight;else{timeline.scrollTop=previousTop;const anchor=anchorId?timeline.querySelector(`[data-event-id="${CSS.escape(anchorId)}"]`):null;if(anchor)timeline.scrollTop+=anchor.getBoundingClientRect().top-timeline.getBoundingClientRect().top-anchorOffset;}}});
 }
 
 function setReply(event) { state.replyTo = event || null; $("#reply-target").classList.toggle("hidden", !event); if (event) { $("#reply-name").textContent = profileFor(event.actor).display_name || event.actor; $("#reply-summary").textContent = event.summary; $("#message").focus(); } }
