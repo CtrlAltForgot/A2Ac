@@ -11,7 +11,8 @@ html,body{height:100%;overflow:hidden}
 .rail,.sidebar,.conversation,.context-panel{min-height:0}
 .sidebar,.conversation{overflow:hidden}
 .conversation{min-height:0}
-.timeline{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.timeline{flex:1 1 auto;min-height:0;min-width:0;width:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+.conversation{overflow:hidden}.event{grid-template-columns:36px minmax(0,1fr);min-width:0;max-width:100%}.event>div:last-child,.event-summary,.context-card,.context-body,.context-rows,.context-row,.coordination-bundle{min-width:0;max-width:100%}.event-summary,.context-row>div,.context-chip,.reply-quote span{overflow-wrap:anywhere;word-break:break-word}.context-card{width:100%}.context-card summary{min-width:0}.context-card summary b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.coordination-bundle{overflow:hidden}
 .event.reply-flash{position:relative;margin-left:-10px;padding-left:10px;border-radius:9px;animation:reply-focus-pulse 3.2s ease-in-out both;box-shadow:inset 3px 0 0 rgba(139,124,255,.9)}
 @keyframes reply-focus-pulse{0%,22%,48%{background:rgba(139,124,255,.06)}11%,35%,63%{background:rgba(139,124,255,.23)}100%{background:transparent;box-shadow:inset 3px 0 0 transparent}}
 .composer{flex:none}
