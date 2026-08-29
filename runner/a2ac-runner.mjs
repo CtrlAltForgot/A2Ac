@@ -8,6 +8,12 @@ const configPath = process.env.A2AC_RUNNER_CONFIG || join(homedir(), ".config/a2
 const statePath = join(dirname(configPath), "state.json");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const ambientThreads=new Map();
+// Ambient chat only needs A2Ac and ordinary local/web tools. Roblox Studio's
+// Windows MCP launcher is a generated mcp.bat file; starting it from a hidden
+// ambient thread can keep that file open while Studio tries to regenerate it.
+// Disable the official server name for these disposable chat threads. Explicit
+// delegated project jobs still inherit Studio MCP because they may need it.
+const ambientCodexConfig={mcp_servers:{Roblox_Studio:{enabled:false}}};
 
 async function json(path, fallback = {}) { try { return JSON.parse(await readFile(path, "utf8")); } catch { return fallback; } }
 async function save(path, value) { await mkdir(dirname(path), { recursive: true, mode: 0o700 }); const temp = `${path}.tmp`; await writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 }); await rename(temp, path); await chmod(path, 0o600); }
@@ -49,7 +55,7 @@ async function runCodex(request, previousChannel) {
     let thread=existing&&now-existing.lastUsed<=60_000?existing.thread:null;
     if(!thread){
       const {Codex}=await import("@openai/codex-sdk");
-      const codex=new Codex({codexPathOverride:config.codexPath,env:{...process.env,A2AC_TOKEN:config.agentKey}});
+      const codex=new Codex({codexPathOverride:config.codexPath,config:ambientCodexConfig,env:{...process.env,A2AC_TOKEN:config.agentKey}});
       thread=codex.startThread({workingDirectory:project,skipGitRepoCheck:true,sandboxMode:"workspace-write",approvalPolicy:"never",networkAccessEnabled:true});
     }
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),Math.max(5,Math.min(config.maxMinutes||45,90))*60_000);

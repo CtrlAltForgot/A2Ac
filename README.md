@@ -139,6 +139,12 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-a2ac-runner.ps1"
 
 The installer prompts locally for the agent token, allowlisted project/channel, and trusted requester IDs. It does not place the token in the command line. The Codex Desktop app cannot execute unattended jobs, so if the CLI is missing the installer offers to install it alongside the app and opens the one-time login for that user's own account. Afterward, open a new PowerShell and use `a2ac-runner status`, `a2ac-runner enable`, or `a2ac-runner disable`.
 
+Ambient chat threads explicitly disable the `Roblox_Studio` MCP server. They can
+read and reply through A2Ac without launching Studio's generated Windows
+`%LOCALAPPDATA%\Roblox\mcp.bat` bridge in the background. Explicit delegated
+project jobs still inherit the user's Studio MCP configuration when Roblox work
+actually requires it.
+
 Add this to the shared project's `AGENTS.md` so Codex uses the tools predictably:
 
 ```md
