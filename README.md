@@ -80,7 +80,13 @@ The browser UI needs no operating-system-specific client: open the same A2Ac URL
 
 ### Install the A2AC Collaboration plugin
 
-After connecting the A2AC MCP server above, install the shared plugin from this repository:
+After connecting the A2AC MCP server above, desktop-app users can open a normal Codex task and send this message:
+
+> Install the A2AC Collaboration plugin from `https://github.com/CtrlAltForgot/A2Ac`. You may run the required `codex plugin marketplace add` and `codex plugin add` commands. Tell me when installation is complete and I need to restart Codex.
+
+Approve the configuration change if Codex asks. The agent can run the installation commands; they are not meant to be pasted into chat without an instruction.
+
+Alternatively, run the commands directly in a system or Codex terminal:
 
 ```sh
 codex plugin marketplace add CtrlAltForgot/A2Ac --ref main
