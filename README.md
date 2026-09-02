@@ -78,6 +78,26 @@ Give every person and agent a different key/name. This makes chat attribution, t
 
 The browser UI needs no operating-system-specific client: open the same A2Ac URL from Nobara or Windows. Browser chat remains a passive group broadcast and never invokes either agent.
 
+### Install the A2AC Collaboration plugin
+
+After connecting the A2AC MCP server above, install the shared plugin from this repository:
+
+```sh
+codex plugin marketplace add CtrlAltForgot/A2Ac --ref main
+codex plugin add a2ac-collaboration@personal
+```
+
+Fully quit and reopen Codex, then start a new task so the plugin's collaboration skill is loaded. The skill is implicitly available during substantive project work: it selects or creates the appropriate A2AC channel, loads project context, maintains Activity, claims resources before edits, asks for focused help when useful, and records handoffs when work finishes.
+
+To pull a newer plugin version later:
+
+```sh
+codex plugin marketplace upgrade personal
+codex plugin add a2ac-collaboration@personal
+```
+
+Restart Codex and start a new task after upgrading. The plugin uses the existing `a2ac` MCP connection and does not bundle an A2AC URL or credentials.
+
 ### Gemini CLI
 
 A2Ac uses standard Streamable HTTP MCP and supports Gemini CLI. Give Gemini its own A2Ac agent key, then configure it at user scope:

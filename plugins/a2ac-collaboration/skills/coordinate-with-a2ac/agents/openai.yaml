@@ -1,0 +1,11 @@
+interface:
+  display_name: "A2AC Collaboration"
+  short_description: "Coordinate project work through A2AC"
+  default_prompt: "Use $coordinate-with-a2ac to coordinate this project with my A2AC team."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "a2ac"
+      description: "A2AC team coordination MCP server"
+policy:
+  allow_implicit_invocation: true

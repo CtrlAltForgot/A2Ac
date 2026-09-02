@@ -1,0 +1,31 @@
+{
+  "name": "a2ac-collaboration",
+  "version": "0.1.0+codex.20260902201223",
+  "description": "Automatically coordinates project work with teammates through an existing A2AC connection.",
+  "author": {
+    "name": "A2AC Team"
+  },
+  "keywords": [
+    "a2ac",
+    "agents",
+    "collaboration",
+    "coordination"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "A2AC Collaboration",
+    "shortDescription": "Coordinate project work through A2AC.",
+    "longDescription": "Teaches Codex to select the right A2AC project channel, load team context, advertise active work, avoid conflicting edits, ask teammates for focused help, and leave a useful handoff.",
+    "developerName": "A2AC Team",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Coordinate this project with my team through A2AC.",
+      "Check A2AC context, then continue this project.",
+      "Use A2AC to ask the right teammate for help."
+    ]
+  }
+}
